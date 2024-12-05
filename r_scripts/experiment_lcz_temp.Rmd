@@ -1,0 +1,97 @@
+---
+title: "Experiment with LCZ"
+author: "Johannes Gruenewald"
+date: "2024-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(geojsonsf)
+library(terra)
+#library(sp)
+library(gstat)
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+lcz <- terra::rast("../data/lcz.tif")
+data_temp <- st_read("../data/sensor_data_202407081200_7days.gpkg")
+```
+
+```{r}
+data_temp <- data_temp %>% 
+  filter(!is.na(temperature)) %>%
+  group_by(entity_id) %>%
+  slice_max(order_by = dateobserved, n = 1) %>% 
+  dplyr::select(c(temperature))
+```
+
+```{r}
+# Add X Y Coordinates to data_temp This is necessary for later steps
+data_temp$X <- st_coordinates(data_temp)[,1]
+data_temp$Y <- st_coordinates(data_temp)[,2]
+```
+
+```{r}
+# get elevation at the sites
+lcz_number <- terra::extract(lcz,
+                             data_temp,
+                             buffer=0)
+```
+
+```{r}
+# unlist elevations to add as column to data
+data_temp$lcz_number <- lcz_number[,2]
+```
+
+
+```{r}
+# Ensure the columns exist in the sf object
+if("temperature" %in% colnames(data_temp) & "lcz_number" %in% colnames(data_temp)) {
+  # Create the scatter plot with swapped axes
+  ggplot(data_temp, aes(x = lcz_number, y = temperature)) +
+    geom_point(color = "blue", alpha = 0.7) + # Scatter points
+    geom_smooth(method = "lm", color = "red", se = TRUE) + # Linear regression line
+    labs(
+      title = "Correlation Between Temperature and LCZ",
+      x = "Temperature (°C)",
+      y = "Elevation (meters)"
+    ) +
+    theme_minimal() # Clean and modern theme
+} else {
+  print("The columns 'temperature' and 'elevation' are not found in the sf object.")
+}
+```
+
+
+
+```{r}
+# Ensure the columns exist in the sf object
+if("temperature" %in% colnames(data_temp) & "lcz_number" %in% colnames(data_temp)) {
+  # Calculate average temperature per lcz_number
+  avg_temp_per_lcz <- data_temp %>%
+    group_by(lcz_number) %>%
+    summarize(avg_temperature = mean(temperature, na.rm = TRUE)) %>%
+    ungroup()
+  
+  # Create a bar plot for average temperature per LCZ number
+  ggplot(avg_temp_per_lcz, aes(x = factor(lcz_number), y = avg_temperature)) +
+    geom_bar(stat = "identity", fill = "skyblue", color = "black", alpha = 0.7) + # Bar plot
+    labs(
+      title = "Average Temperature per LCZ Number",
+      x = "LCZ Number",
+      y = "Average Temperature (°C)"
+    ) +
+    theme_minimal() # Clean and modern theme
+} else {
+  print("The columns 'temperature' and 'lcz_number' are not found in the sf object.")
+}
+```
+
+
