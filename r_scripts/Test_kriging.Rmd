@@ -21,6 +21,7 @@ library("sf")      # spatial vector data
 library("stars")   # spatial-temporal data
 library("terra")   # raster data handling 
 library("ggplot2") # plotting
+library(tidyverse)
 mapviewOptions(fgb = FALSE)
 ```
 
@@ -129,6 +130,41 @@ plot(temp["temperature"], col="blue", cex=0.5, type="p", add=T)
 
 Universal kriging includes other covariates to account for potential trends
 ```{r}
-lcz_gridcv <- read_stars("../data/lcz.tif")
-plot(lcz_gridcv)
+elev <- terra::rast("../data/hd_elev.tif")
 ```
+
+```{r}
+elev <- terra::project(elev,"EPSG:4326")
+crs(elev)
+```
+
+```{r}
+temp <- temp %>% 
+  filter(!is.na(temperature)) %>%
+  group_by(entity_id) %>%
+  slice_max(order_by = dateobserved, n = 1) %>% 
+  dplyr::select(c(temperature))
+```
+
+```{r}
+# Add X Y Coordinates to data_temp This is necessary for later steps
+temp$X <- st_coordinates(temp)[,1]
+temp$Y <- st_coordinates(temp)[,2]
+```
+
+```{r}
+# get elevation at the sites
+elevation <- terra::extract(elev,
+                             temp,
+                             buffer=0)
+```
+
+```{r}
+# unlist elevations to add as column to data
+data_temp$elevation <- elevation[,2]
+```
+
+```{r}
+plot(data_temp$elevation)
+```
+
