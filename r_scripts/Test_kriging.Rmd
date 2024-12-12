@@ -21,18 +21,27 @@ library("sf")      # spatial vector data
 library("stars")   # spatial-temporal data
 library("terra")   # raster data handling 
 library("ggplot2") # plotting
-library(tidyverse)
+library("tidyverse")
+library("dplyr")
 mapviewOptions(fgb = FALSE)
 ```
 
 
-Read temperature points
 ```{r}
-temp <- read_sf('C:/Users/user/OneDrive/Documents/Uni/Master Heidelberg/Masterarbeit/data/temp/subset_temp_data.gpkg')
+# Read temperature points
+temp <- read_sf('../data/sensor_data_202407081200_7days.gpkg')
 temp
 ```
 
 ```{r}
+# Filter by specific date (ignoring the time)
+temp_subset <- temp %>% filter(format(`dateobserved-hourly`, "%Y-%m-%d") == '2023-07-08')
+
+temp_subset
+```
+
+```{r}
+# Plot measurement stations
 mapview(temp['temperature'])
 ```
 
@@ -40,21 +49,15 @@ Create a grid
 ```{r}
 bbox <- st_bbox(temp)
 bbox
-```
 
-```{r}
-cell_size <- 0.001
+cell_size <- 0.00008
 
 x <- seq(bbox$xmin, bbox$xmax, by=cell_size)
 y <- seq(bbox$ymin, bbox$ymax, by=cell_size)
-```
 
-```{r}
 temp_grid <- expand.grid(x=x, y=y)
-plot(temp_grid$x, temp_grid$y, pch=19, cex=0.1)
-```
+#plot(temp_grid$x, temp_grid$y, pch=19, cex=0.1)
 
-```{r}
 temp_grid$tmp <- 1
 temp_grid <- st_as_stars(temp_grid, crs=st_crs(temp))
 st_crs(temp_grid) <- st_crs(temp) # re-assign crs to be safe
@@ -63,7 +66,7 @@ st_crs(temp_grid) <- st_crs(temp) # re-assign crs to be safe
 IDW Interpolation
 ```{r}
 # Remove rows with NA in 'temperature'
-temp <- temp[!is.na(temp$temperature), ]
+temp_subset <- temp_subset[!is.na(temp_subset$temperature), ]
 
 temp.idw <- gstat::idw(temperature ~ 1, locations=temp, newdata=temp_grid, idp = 2)
 ```
@@ -80,17 +83,17 @@ plot(temp["temperature"], col=1, cex=0.5, add=T, type="p")
 
 Sample Variogram
 ```{r}
-temp.v <- gstat::variogram(log(temperature) ~ 1, temp)
+temp.v <- gstat::variogram(log(temperature) ~ 1, temp_subset)
 plot(temp.v, ylab=bquote(gamma), xlab=c("h (separation distance in m)"))
 ```
 
 Direction dependence
 ```{r}
-plot(variogram(log(temperature) ~ 1, temp, alpha = c(0, 45, + 90, 135)))
+plot(variogram(log(temperature) ~ 1, temp_subset, alpha = c(0, 45, + 90, 135)))
 ```
 Fit a variogram
 ```{r}
-temp.sph <- vgm(psill=0.03, "Sph", range=3, nugget=0.0002)
+temp.sph <- vgm(psill=0.011, "Lin", range=15, nugget=0.008)
 plot(temp.v, temp.sph, cutoff=4)
 ```
 
@@ -113,7 +116,7 @@ Ordinary kriging
 #temp.vfit <- gstat::fit.variogram(temp.v, vgm(0.03, "Sph", 3, 0.0002))
 
 # ordinary kriging
-lz.ok <- gstat::krige(log(temperature) ~ 1, temp, temp_grid, temp.vfit)
+lz.ok <- gstat::krige(log(temperature) ~ 1, temp_subset, temp_grid, temp.vfit)
 ```
 
 Plot results of ordinary kriging
