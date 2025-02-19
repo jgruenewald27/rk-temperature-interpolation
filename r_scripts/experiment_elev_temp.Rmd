@@ -9,59 +9,151 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+Check if there is a correlation between elevation and temperature information. Elevation information should be included in the analysis as it is one of the most obvious parameters influencing temperature information, especially in Heidelberg as it is also linked to a difference in land use/land cover.
+
+This R script explores this relationship between the two.
 
 ```{r}
+# Import all libraries
 library(sf)
 library(geojsonsf)
 library(terra)
-#library(sp)
+library(sp)
 library(gstat)
 library(tidyverse)
 library(ggplot2)
+library(lubridate)
 ```
 
 ```{r}
+# Import the data
 elev <- terra::rast("../data/hd_elev.tif")
-data_temp <- st_read("../data/sensor_data_202407081200_7days.gpkg")
+data_temp <- st_read("../data/sensor_data_20240107_31days.gpkg")
 ```
 
 ```{r}
-elev <- terra::project(elev,"EPSG:4326")
-crs(elev)
+# Reproject DEM
+elev <- terra::project(elev,"EPSG:32632")
+
+# Reproject temperature data
+data_temp <- st_transform(data_temp, crs = 32632)
+
+# Check if CRS match and print both CRS
+if (st_crs(data_temp) == crs(elev)) {
+  print("CRS match: Both datasets are in the same coordinate reference system.")
+} else {
+  print("CRS mismatch: The datasets have different coordinate reference systems.")
+}
+
+# Print the actual CRS of both datasets
+#print(paste("Temperature Data CRS:", st_crs(data_temp)$input))
+#print(paste("DEM CRS:", crs(elev)))
+```
+
+Clean the temperature data
+
+```{r}
+# clean the data and convert into correct data format
+data_temp_clean <- data_temp %>%
+  filter(!is.na(temperature))
+
+data_temp_clean$dateobserved <- as.Date(data_temp_clean$dateobserved)
+data_temp_clean$temperature <- as.numeric(data_temp_clean$temperature)
+```
+
+Explore temperature data
+
+```{r}
+# create a daily mean for each station
+data_temp_daily <- data_temp_clean %>%
+  group_by(stationname, dateobserved) %>%
+  summarise(daily_avg_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
 ```
 
 ```{r}
-data_temp <- data_temp %>% 
-  filter(!is.na(temperature)) %>%
-  group_by(entity_id) %>%
-  slice_max(order_by = dateobserved, n = 1) %>% 
-  dplyr::select(c(temperature))
+# create a weekly mean for each station
+data_temp_weekly <- data_temp_clean %>%
+  mutate(week = week(dateobserved), year = year(dateobserved)) %>%
+  group_by(stationname, year, week) %>%
+  summarise(weekly_avg_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
 ```
 
 ```{r}
-# Add X Y Coordinates to data_temp This is necessary for later steps
-data_temp$X <- st_coordinates(data_temp)[,1]
-data_temp$Y <- st_coordinates(data_temp)[,2]
+# calculate some summary statistics for further data exploration
+summary_stats <- data_temp_clean %>%
+  group_by(stationname) %>%
+  summarise(
+    mean_temp = mean(temperature, na.rm = TRUE),
+    median_temp = median(temperature, na.rm = TRUE),
+    sd_temp = sd(temperature, na.rm = TRUE),
+    min_temp = min(temperature, na.rm = TRUE),
+    max_temp = max(temperature, na.rm = TRUE)
+  )
+```
+
+```{r}
+# only plot the temperature distribution
+
+# Ensure the column exists
+if("temperature" %in% colnames(data_temp_clean)) {
+  # Create a histogram and density plot for temperature values
+  ggplot(data_temp_clean, aes(x = temperature)) +
+    geom_histogram(binwidth = 1, fill = "black", alpha = 0.6, color = "black") + # Histogram
+    geom_density(color = "red", size = 1) + # Density plot
+    labs(
+      title = "Temperature Distribution",
+      x = "Temperature (°C)",
+      y = "Frequency"
+    ) +
+    theme_minimal() # Clean and modern theme
+} else {
+  print("The column 'temperature' is not found in the dataset.")
+}
+```
+
+For working with elevation data we need the information at the location of the corresponding measurement station.
+
+```{r}
+# Add X Y Coordinates to data_temp
+data_temp_weekly$X <- st_coordinates(data_temp_weekly)[,1]
+data_temp_weekly$Y <- st_coordinates(data_temp_weekly)[,2]
 ```
 
 ```{r}
 # get elevation at the sites
-elevation <- terra::extract(elev,
-                             data_temp,
-                             buffer=0)
+elevation <- terra::extract(elev, data_temp_weekly, buffer=0)
+
+# unlist elevations to add as column to data
+data_temp_weekly$elevation <- elevation[,2]
 ```
 
 ```{r}
-# unlist elevations to add as column to data
-data_temp$elevation <- elevation[,2]
+# only plot the elevation distribution
+
+# Ensure the column exists
+if("elevation" %in% colnames(data_temp_weekly)) {
+  # Create a histogram and density plot for elevation values
+  ggplot(data_temp_weekly, aes(x = elevation)) +
+    geom_histogram(binwidth = 1, fill = "black", alpha = 0.6, color = "black") + # Histogram
+    geom_density(color = "red", size = 1) + # Density plot
+    labs(
+      title = "Elevation Distribution",
+      x = "Elevation (m)",
+      y = "Frequency"
+    ) +
+    theme_minimal() # Clean and modern theme
+} else {
+  print("The column 'elevation' is not found in the dataset.")
+}
 ```
 
+Check for correlation between temperature and elevation and plot the results to check if there is any correlation.
 
 ```{r}
 # Ensure the columns exist in the sf object
-if("temperature" %in% colnames(data_temp) & "elevation" %in% colnames(data_temp)) {
+if("weekly_avg_temp" %in% colnames(data_temp_weekly) & "elevation" %in% colnames(data_temp_weekly)) {
   # Create the scatter plot with swapped axes
-  ggplot(data_temp, aes(x = temperature, y = elevation)) +
+  ggplot(data_temp_weekly, aes(x = weekly_avg_temp, y = elevation)) +
     geom_point(color = "blue", alpha = 0.7) + # Scatter points
     geom_smooth(method = "lm", color = "red", se = TRUE) + # Linear regression line
     labs(
@@ -75,3 +167,86 @@ if("temperature" %in% colnames(data_temp) & "elevation" %in% colnames(data_temp)
 }
 ```
 
+Results of correlation analysis for the mean temperature for each station per week.
+
+```{r}
+# Ensure the required columns exist in the dataset
+if("weekly_avg_temp" %in% colnames(data_temp_weekly) & "elevation" %in% colnames(data_temp_weekly)) {
+  
+  # Pearson Correlation
+  pearson_corr <- cor(data_temp_weekly$weekly_avg_temp, data_temp_weekly$elevation, method = "pearson", use = "complete.obs")
+  
+  # Spearman Correlation
+  spearman_corr <- cor(data_temp_weekly$weekly_avg_temp, data_temp_weekly$elevation, method = "spearman", use = "complete.obs")
+  
+  # Linear Regression Model
+  lm_model <- lm(weekly_avg_temp ~ elevation, data = data_temp_weekly)
+  
+  # R-squared value
+  r_squared <- summary(lm_model)$r.squared
+  
+  # Correlation significance test (p-value)
+  correlation_test <- cor.test(data_temp_weekly$weekly_avg_temp, data_temp_weekly$elevation, method = "pearson")
+  p_value <- correlation_test$p.value
+  
+  # Print results
+  print(paste("Pearson Correlation:", round(pearson_corr, 3)))
+  print(paste("Spearman Correlation:", round(spearman_corr, 3)))
+  print(paste("R-squared from Linear Regression:", round(r_squared, 3)))
+  print(paste("P-value:", round(p_value, 5)))
+  
+} else {
+  print("The columns 'temperature' and 'elevation' are not found in the sf object.")
+}
+```
+
+Results of correlation analysis for only one value per day.
+
+```{r}
+# Ensure the required columns exist in the dataset
+if("temperature" %in% colnames(data_temp) & "elevation" %in% colnames(data_temp)) {
+  
+  # Pearson Correlation
+  pearson_corr <- cor(data_temp$temperature, data_temp$elevation, method = "pearson", use = "complete.obs")
+  
+  # Spearman Correlation
+  spearman_corr <- cor(data_temp$temperature, data_temp$elevation, method = "spearman", use = "complete.obs")
+  
+  # Linear Regression Model
+  lm_model <- lm(temperature ~ elevation, data = data_temp)
+  
+  # R-squared value
+  r_squared <- summary(lm_model)$r.squared
+  
+  # Correlation significance test (p-value)
+  correlation_test <- cor.test(data_temp$temperature, data_temp$elevation, method = "pearson")
+  p_value <- correlation_test$p.value
+  
+  # Print results
+  print(paste("Pearson Correlation:", round(pearson_corr, 3)))
+  print(paste("Spearman Correlation:", round(spearman_corr, 3)))
+  print(paste("R-squared from Linear Regression:", round(r_squared, 3)))
+  print(paste("P-value:", round(p_value, 5)))
+  
+} else {
+  print("The columns 'temperature' and 'elevation' are not found in the sf object.")
+}
+```
+- Elevation is a strong predictor of temperature.
+- Very strong negative linear relationship between temperature and elevation.
+- No strong monotonic trend, meaning local variations
+- The relationship is mostly linear but has some deviations.
+- Linear regression explains most of the variation
+- The statistical significance is very high, confirming that the correlation is meaningful.
+
+Results for 7 days (sensor_data_202407081200_7days):
+[1] "Pearson Correlation: -0.86"
+[1] "Spearman Correlation: -0.559"
+[1] "R-squared from Linear Regression: 0.74"
+[1] "P-value: 0"
+
+Results for 31 days (sensor_data_20240107_31days):
+[1] "Pearson Correlation: -0.901"
+[1] "Spearman Correlation: -0.015"
+[1] "R-squared from Linear Regression: 0.812"
+[1] "P-value: 0"
