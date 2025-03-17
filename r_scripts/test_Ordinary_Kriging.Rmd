@@ -213,3 +213,27 @@ lzn.kriged %>% as.data.frame %>%
   ggtitle("Kriging Prediction of Log-Transformed Elevation Normalized Temperature")
 ```
 
+Leave-one-out cross-validation
+
+```{r}
+# Perform leave-one-out cross-validation
+lzn.kriged.cv <- krige.cv(log(norm_temperature) ~ 1, july_mean_temp, grid_points, model = lzn.fit)
+
+# Extract the results
+cv_results <- as.data.frame(lzn.kriged.cv)
+
+# View the results
+head(cv_results)
+```
+
+Explanation of the results:
+- Predicted Values (var1.pred) are the model's best estimate of the temperature.
+- Observed Values (observed) are the actual measurements.
+- Residuals (residual) are the errors between predictions and actual measurements.
+- Z-Scores (zscore) help to assess the significance of the residuals relative to expected variability.
+- Prediction Variance (var1.var) indicates uncertainty in the model's predictions.
+
+More information on z-scores:
+- A z-score around 0 means the residual is within the expected range, i.e., the prediction error is not large in comparison to the variability. 
+- A z-score far from 0 (e.g., > 2 or < -2) suggests a location where the model's prediction error is unusually large or small. These locations might warrant further inspection or could suggest areas where the model has poor performance.
+- Positive z-scores indicate that the observed values are larger than the predicted values (underestimation by the model), and negative z-scores indicate the opposite (overestimation by the model).
