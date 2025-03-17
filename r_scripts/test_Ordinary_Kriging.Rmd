@@ -1,0 +1,215 @@
+---
+title: "Test of Ordinary Kriging"
+output: html_notebook
+---
+
+Approach is based on the documentation here: https://rpubs.com/nabilabd/118172
+This script provides a basic kriging approach as a benchmark for comparing different kriging methods and results. It performs simple Ordinary Kriging without incorporating additional covariates.
+
+```{r}
+# Load packages
+# Spatial Data Handling & Processing
+library("sf")      
+library("sp")
+library("terra")    
+library("stars")   
+
+# Spatial Analysis & Interpolation
+library("gstat")  
+
+# Data Manipulation & Wrangling
+library("tidyverse")  # Includes ggplot2, dplyr, etc.
+library("dplyr")
+library("magrittr")  
+
+# Data Visualization
+library("ggplot2") 
+library("scales")
+library("gridExtra") 
+
+# Mapping & Interactive Visualization
+library("mapview") 
+```
+
+Load the temperature measurements as input data
+
+```{r}
+# Read temperature points
+temp <- read_sf('../data/sensor_data_20240107_31days.gpkg')
+
+class(temp)
+```
+
+Pre-processing of the temperature data
+
+```{r}
+# Removes only rows where `temperature` is NA
+temp <- temp[!is.na(temp$temperature), ]  
+
+# Ensure dateobserved is in the correct date-time format
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
+
+# Calculate the mean temperature for each station in July
+july_mean_temp <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July
+  group_by(stationname) %>%  # Group by individual station
+  summarise(mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")  # Compute mean
+
+
+# View the result and class of the object
+july_mean_temp
+class(july_mean_temp)
+```
+
+Normalize temperature using elevation
+
+```{r}
+# Load the elevation data
+dem <- rast("../data/hd_elev_32632.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem,"EPSG:4326")
+```
+
+Get elevation information at point locations
+
+```{r}
+# Get elevation at the sites
+elevation <- terra::extract(dem, july_mean_temp, buffer=0)
+
+# Rename the extracted column to "elevation"
+names(elevation)[names(elevation) != "ID"] <- "elevation"
+
+# Add the elevation data to the temperature data
+july_mean_temp$elevation <- elevation$elevation
+```
+
+Normalize the temperature data using elevation information
+
+```{r}
+# Degrees C per meter -> standard parameter, needs to further investigated for future
+lapse_rate <- 0.0065  
+
+# Sea level as reference station
+reference_elevation <- 0  
+
+# Adjust temperatures for elevation effect
+july_mean_temp$norm_temperature <- july_mean_temp$mean_temperature + 
+                             (reference_elevation - july_mean_temp$elevation) * lapse_rate
+```
+
+Transform temperature data to SpatialPointsDataFrame
+
+```{r}
+# Ensure the data has point geometry
+if (st_geometry_type(temp)[1] == "POINT") {
+  july_mean_temp <- as(july_mean_temp, "Spatial")
+} else {
+  stop("The dataset does not contain point geometry.")
+}
+
+class(july_mean_temp)
+```
+
+Get boundaries of bounding box to create grid for interpolation
+
+```{r}
+bbox(july_mean_temp)
+```
+
+Create a grid for the interpolation
+
+```{r}
+# Extract the bounding box from july_mean_temp
+bbox_values <- bbox(july_mean_temp)
+
+# Define the grid resolution
+res <- 0.00009009  # ~10 meters in degrees (latitude or longitude)
+
+# Create grid coordinates within the bounding box
+x_range <- seq(bbox_values[1, 1], bbox_values[1, 2], by = res)  # Longitude (coords.x1)
+y_range <- seq(bbox_values[2, 1], bbox_values[2, 2], by = res)  # Latitude (coords.x2)
+
+# Create the grid from the longitude and latitude ranges
+grid_points <- expand.grid(x = x_range, y = y_range)
+
+# Convert to a spatial grid an create grid from the points
+coordinates(grid_points) <- ~ x + y
+gridded(grid_points) <- TRUE
+
+# Assign the same CRS as the temp datato the grid
+proj4string(grid_points) <- proj4string(july_mean_temp)
+
+# Visualize the grid for checking
+plot(grid_points, main = "Grid Surface over Bounding Box Area")
+```
+
+```{r}
+# Extract coordinates from temp data (SpatialPointsDataFrame)
+july_mean_temp_df <- as.data.frame(july_mean_temp)
+july_mean_temp_df$x <- july_mean_temp_df$coords.x1  
+july_mean_temp_df$y <- july_mean_temp_df$coords.x2
+
+# Plot the points with measurements
+plot1 <- ggplot(july_mean_temp_df, aes(x = x, y = y)) +
+  geom_point(size = 1, color = "blue") +  
+  coord_equal() + 
+  ggtitle("Points with Temperature Measurements") +
+  theme_minimal()  
+
+# Extract coordinates from grid (SpatialPixels)
+grid_points_df <- as.data.frame(grid_points)
+grid_points_df$x <- grid_points_df$x
+grid_points_df$y <- grid_points_df$y
+
+# Plot the grid for interpolation
+plot2 <- ggplot(grid_points_df, aes(x = x, y = y)) +
+  geom_point(size = 1, color = "black") +  
+  coord_equal() + 
+  ggtitle("Points at Which to Estimate") +
+  theme_minimal() 
+
+# Arrange the plots side by side
+grid.arrange(plot1, plot2, ncol = 2)
+```
+
+Compute experimental variogram and fit model to the data
+
+```{r}
+# Compute experimental variogram for log-transformed mean temperature
+lzn.vgm <- variogram(log(mean_temperature) ~ 1, july_mean_temp, width = 0.5, cutoff = 10) 
+
+# Plot the sample variogram
+#plot(lzn.vgm)
+
+# Fit an exponential variogram model to the sample variogram
+lzn.fit <- fit.variogram(lzn.vgm, model = vgm(1.5, "Exp", 5, 0.2))
+
+# Plot the sample variogram with the fitted model
+plot(lzn.vgm, lzn.fit)
+```
+
+Run Ordinary Kriging
+
+```{r}
+# Perform kriging interpolation for log-transformed normalized temperature  
+lzn.kriged <- krige(log(norm_temperature) ~ 1, july_mean_temp, grid_points, model=lzn.fit)
+```
+
+Results of Ordinary Kriging
+
+```{r}
+# Convert kriging results to a data frame and visualize the predicted values
+# Create a heatmap for the predicted values
+lzn.kriged %>% as.data.frame %>%
+  ggplot(aes(x=x, y=y)) + 
+  geom_tile(aes(fill=var1.pred)) + 
+  coord_equal() +
+  scale_fill_gradient(low = "yellow", high="red") +
+  scale_x_continuous(labels=comma) +
+  scale_y_continuous(labels=comma) +
+  theme_bw() +
+  ggtitle("Kriging Prediction of Log-Transformed Elevation Normalized Temperature")
+```
+
