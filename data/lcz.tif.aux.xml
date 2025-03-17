@@ -1,0 +1,45 @@
+<PAMDataset>
+  <PAMRasterBand band="1">
+    <Description>lcz</Description>
+    <Histograms>
+      <HistItem>
+        <HistMin>-0.4722222222222222</HistMin>
+        <HistMax>17.47222222222222</HistMax>
+        <BucketCount>18</BucketCount>
+        <IncludeOutOfRange>0</IncludeOutOfRange>
+        <Approximate>0</Approximate>
+        <HistCounts>10|0|1247|0|8919|3779|8825|0|0|22593|3828|21631|9089|3647|0|462|18076|2266</HistCounts>
+      </HistItem>
+    </Histograms>
+    <Metadata>
+      <MDI key="STATISTICS_MAXIMUM">17</MDI>
+      <MDI key="STATISTICS_MEAN">10.35450120722</MDI>
+      <MDI key="STATISTICS_MINIMUM">0</MDI>
+      <MDI key="STATISTICS_STDDEV">3.8050919448876</MDI>
+      <MDI key="STATISTICS_VALID_PERCENT">100</MDI>
+    </Metadata>
+  </PAMRasterBand>
+  <PAMRasterBand band="2">
+    <Description>lczFilter</Description>
+  </PAMRasterBand>
+  <PAMRasterBand band="3">
+    <Description>classProbability</Description>
+    <Histograms>
+      <HistItem>
+        <HistMin>-0.495049504950495</HistMin>
+        <HistMax>100.4950495049505</HistMax>
+        <BucketCount>101</BucketCount>
+        <IncludeOutOfRange>0</IncludeOutOfRange>
+        <Approximate>0</Approximate>
+        <HistCounts>10|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|2|0|0|0|35|0|0|0|235|0|0|0|884|0|0|0|2391|0|0|0|4017|0|0|0|5623|0|0|0|6830|0|0|0|7915|0|0|0|7981|0|0|0|7886|0|0|0|7381|0|0|0|7224|0|0|0|6920|0|0|0|7416|0|0|0|7944|0|0|0|8539|0|0|0|7033|0|0|0|3605|0|0|0|2149|0|0|0|1077|0|0|0|1275</HistCounts>
+      </HistItem>
+    </Histograms>
+    <Metadata>
+      <MDI key="STATISTICS_MAXIMUM">100</MDI>
+      <MDI key="STATISTICS_MEAN">62.731575518339</MDI>
+      <MDI key="STATISTICS_MINIMUM">0</MDI>
+      <MDI key="STATISTICS_STDDEV">16.976152174407</MDI>
+      <MDI key="STATISTICS_VALID_PERCENT">100</MDI>
+    </Metadata>
+  </PAMRasterBand>
+</PAMDataset>

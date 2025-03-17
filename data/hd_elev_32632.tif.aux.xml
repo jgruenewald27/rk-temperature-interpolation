@@ -1,0 +1,13 @@
+<PAMDataset>
+  <PAMRasterBand band="1">
+    <Description>EUD_CP-DEMS_4500025000-AA</Description>
+    <Metadata>
+      <MDI key="STATISTICS_APPROXIMATE">YES</MDI>
+      <MDI key="STATISTICS_MAXIMUM">572.02484130859</MDI>
+      <MDI key="STATISTICS_MEAN">207.18961035422</MDI>
+      <MDI key="STATISTICS_MINIMUM">92</MDI>
+      <MDI key="STATISTICS_STDDEV">122.60398506873</MDI>
+      <MDI key="STATISTICS_VALID_PERCENT">94.04</MDI>
+    </Metadata>
+  </PAMRasterBand>
+</PAMDataset>
