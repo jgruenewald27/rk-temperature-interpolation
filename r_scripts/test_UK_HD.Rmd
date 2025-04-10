@@ -1,0 +1,394 @@
+---
+title: "test_UK_HD"
+author: "Johannes Gruenewald"
+date: "2025-03-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load packages
+# Spatial Data Handling & Processing
+library("sf")      
+library("sp")
+library("terra")    
+library("stars")   
+
+# Spatial Analysis & Interpolation
+library("gstat")  
+
+# Data Manipulation & Wrangling
+library("tidyverse")  # Includes ggplot2, dplyr, etc.
+library("dplyr")
+library("magrittr")  
+
+# Data Visualization
+library("ggplot2") 
+library("scales")
+library("gridExtra") 
+
+# Mapping & Interactive Visualization
+library("mapview") 
+library("tmap")
+```
+
+Load the temperature measurements as input data
+
+```{r}
+# Read temperature points
+temp <- sf::read_sf('../data/sensor_data_20240107_31days.gpkg')
+```
+
+Pre-processing of the temperature data
+
+```{r}
+# Removes only rows where `temperature` is NA
+temp <- temp[!is.na(temp$temperature), ]  
+
+# Ensure dateobserved is in the correct date-time format
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
+
+# Calculate the mean temperature for each station in July
+july_mean_temp <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July
+  group_by(stationname) %>%  # Group by individual station
+  summarise(mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")  # Compute mean
+
+# View the result and class of the object
+class(july_mean_temp)
+```
+
+Load elevation data
+
+```{r}
+# Load the elevation data
+dem <- terra::rast("../data/hd_elevation_4326.tif")
+
+dem
+
+# Check if CRS is correct
+crs(dem)
+
+# Reproject the elevation data to match correct CRS
+#dem <- terra::project(dem,"EPSG:4326")
+```
+
+Plot the temperature against the elevation
+
+```{r}
+tm_shape(dem) + 
+  tm_raster(col="hd_elevation_4326.tif", palette = "Greys", style= "fixed", breaks = c(50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600),
+            title= "Elevation [m]") +
+  tm_shape(july_mean_temp) + tm_dots(col="mean_temperature", size=.2, title ="Temperature [°C]") +
+  tm_scale_bar() +
+  tm_layout(attr.outside = TRUE, legend.outside = TRUE, main.title = "Mean temperature for the month of July")
+```
+
+
+Optional: Transform temperature data to SpatialPointsDataFrame
+
+```{r}
+july_mean_temp_sp <- as(july_mean_temp, "Spatial")
+```
+
+Get boundaries of bounding box to create grid for interpolation
+
+```{r}
+# Check if bounding box is in a reasonable place
+bbox(july_mean_temp_sp)
+
+# Extract the bounding box from the extent of the measurement stations
+bbox_values <- bbox(july_mean_temp_sp)
+```
+
+Create a grid for the interpolation
+
+```{r}
+# Define the grid resolution
+res <- 0.00044956  # ~50 meters in degrees (latitude or longitude)
+
+# Create grid coordinates within the bounding box
+x_range <- seq(bbox_values[1, 1], bbox_values[1, 2], by = res)  # Longitude (coords.x1)
+y_range <- seq(bbox_values[2, 1], bbox_values[2, 2], by = res)  # Latitude (coords.x2)
+
+# Create the grid from the longitude and latitude ranges
+grid_points <- expand.grid(x = x_range, y = y_range)
+
+# Convert to a spatial grid an create grid from the points
+coordinates(grid_points) <- ~ x + y
+gridded(grid_points) <- TRUE
+
+# Assign the same CRS as the temp datato the grid
+proj4string(grid_points) <- CRS("+proj=longlat +datum=WGS84")
+
+# Check if CRS was correctly assigned
+st_crs(grid_points)$epsg == 4326
+
+# Visualize the grid for checking
+plot(grid_points, main = "Grid Surface over Bounding Box Area", col = "black", pch = 20, cex = 0.5)
+```
+
+Convert the grid into the correct object type to enable correct functionality for it.
+
+```{r}
+# Convert gird object from SpatialPixels to SpatialPoints object
+grid_points_sp <- as(grid_points, "SpatialPoints")
+
+# Convert grid object from sp to sf object
+grid_points_sf <- sf::st_as_sf(grid_points_sp)
+
+# set CRS to 4326 for new sf grid object
+grid_points_sf <- sf::st_set_crs(grid_points_sf, 4326) 
+
+# Check if CRS is correct
+st_crs(grid_points_sf)$epsg == 4326
+```
+
+Get elevation at each grid position were interpolation should be run
+
+```{r}
+# Extract elevation values from the DEM at point locations
+elevation <- terra::extract(dem, grid_points_sf, buffer=0)
+
+# Rename the extracted column to "elevation"
+names(elevation)[names(elevation) != "ID"] <- "elevation"
+
+# Add the elevation data to the grid
+grid_points_sf$elevation <- elevation$elevation
+
+# Check how many NA values are in each column of the sf object
+na_check <- sapply(grid_points_sf, function(x) sum(is.na(x)))
+print(na_check)
+```
+
+IS THIS USED??
+
+```{r}
+# Convert sf object to SpatRaster by rasterizing the 'elevation' field
+spat_raster <- terra::rasterize(grid_points_sf, terra::rast(), field = "elevation")
+
+# Convert the SpatRaster object to Spatial Pixels
+grid_points_elev <- as.spixels(spat_raster)
+
+# Convert the sf object to a sp object
+grid_points_sp <- as(grid_points_sf, "Spatial")
+
+# Convert the 'elevation' field in the SpatialPointsDataFrame to numeric
+grid_points_sp$elevation <- as.numeric(grid_points_sp$elevation)
+```
+
+Add elevation information at measurement stations for variogram calculations
+
+```{r}
+# Get elevation at the measurement sites
+elevation <- terra::extract(dem, july_mean_temp, buffer=0)
+
+# Rename the extracted column to "elevation"
+names(elevation)[names(elevation) != "ID"] <- "elevation"
+
+# Add the elevation data to the temperature data
+july_mean_temp$elevation <- elevation$elevation
+```
+
+Histogram of data distribution for the calculated mean temperature
+
+```{r}
+hist(july_mean_temp$mean_temperature, breaks=20, main="Distribution of Mean Temperature in July", col="lightgrey")
+
+plot(density(july_mean_temp$mean_temperature), main = "Density of Mean Temperature in July")
+```
+
+Histogram for the elevation information at the location of the measurement stations
+
+```{r}
+hist(july_mean_temp$elevation, breaks=50, main="Distribution of Elevation", col="lightgrey")
+
+plot(density(july_mean_temp$elevation), main = "Density of Elevation")
+```
+
+Compute experimental variogram and fit model to the data
+
+```{r}
+# Compute experimental variogram for mean temperature and elevation
+v = variogram(mean_temperature~elevation, july_mean_temp)
+
+# Plot the sample variogram
+plot(v)
+
+# Fit an exponential variogram model to the sample variogram
+lzn.fit <- fit.variogram(v, model = vgm(psill = 0.35, model = "Sph", range = 3.5, nugget = 0.05, maxdist= 4))
+
+# Plot the sample variogram with the fitted model
+plot(v, lzn.fit)
+```
+
+```{r}
+tempUk.svar <- variogram(mean_temperature ~ elevation, 
+                         data=july_mean_temp)
+plot(tempUk.svar)
+
+tempUk.vgm <- fit.variogram(tempUk.svar, 
+                            model=vgm(psill = 0.2247904, model="Sph", range = 0.7590153, nugget = 0.1), fit.ranges=TRUE)
+plot(tempUk.svar, tempUk.vgm)
+```
+
+```{r}
+#predLocations <- rasterToPoints(dem, spatial = TRUE )
+predLocations <- as.points(dem)
+predLocations <- as(predLocations, "Spatial")
+predLocations$X <- coordinates(predLocations)[,1]
+predLocations$Y <- coordinates(predLocations)[,2]
+gridded(predLocations) <- TRUE
+
+names(predLocations)[1] <- "elevation"
+```
+
+
+```{r}
+predTempHD <- krige(mean_temperature ~ elevation, 
+                    locations = as(july_mean_temp, "Spatial"), 
+                    newdata = predLocations, model =  tempUk.vgm)
+```
+
+```{r}
+predTempHDRas <- raster::brick(predTempHD)
+```
+
+```{r}
+#tmap_mode("plot")
+tm_shape(subset(predTempHDRas, subset = "var1.pred")) + 
+  tm_raster(col="var1.pred", title = "Prediction [°C]", n=9, 
+            legend.reverse = TRUE, palette = "-RdBu") +
+  tm_shape(july_mean_temp) + 
+  tm_symbols(col="mean_temperature", title.col = "Observed [°C]", 
+             legend.col.reverse = TRUE, palette = "-BrBG", 
+             border.col = "black", size=.1, alpha=.9) +
+  tm_scale_bar() + 
+  tm_layout(title = "Temperature interpolation, HD", 
+            legend.outside = TRUE, attr.outside = TRUE)
+```
+
+```{r}
+#tmap_mode("plot")
+tm_shape(subset(predTempHDRas, subset = "var1.var") %>% sqrt()) + 
+  tm_raster(col="layer", title = "Standard error [°C]", n=9, palette = "Purples") +
+  tm_shape(july_mean_temp) + 
+  tm_symbols(col="mean_temperature", title.col = "Observed [°C]", palette = "-BrBG", 
+             border.col = "black", size=.1, alpha=.9) +
+  tm_scale_bar() + 
+  tm_layout(title = "Temperature interpolation, uk", 
+            legend.outside = TRUE, attr.outside = TRUE)
+```
+
+
+
+Run Universal Kriging
+
+```{r}
+# Run UK with elevation as covariate
+lzn.ukriged <- gstat::krige(formula = mean_temperature ~ elevation, locations = july_mean_temp, newdata = grid_points_sf, model = lzn.fit)
+```
+
+Results of Universal Kriging
+
+```{r}
+head(as.data.frame(lzn.ukriged))  # Check column names
+
+# Convert kriging results to a data frame and visualize the predicted values
+# Create a heatmap for the predicted values
+tm_shape(lzn.ukriged) + 
+  tm_symbols(col = "var1.pred", size = 0.1, palette = "-RdYlBu", title.col = "Predicted Value") +
+  tm_layout(title = "Universal Kriging Prediction of Temperature using Elevation as Covariate", legend.outside = TRUE)
+
+```
+
+Plot the Kriging Variance (Uncertainty)
+High variance areas indicate uncertainty in predictions.
+
+```{r}
+# Plot uncertainty map
+tmap = tm_shape(shp = lzn.ukriged) + tm_dots(col = "var1.var")
+tmap
+```
+
+Investigate observed vs. predicted values
+Are these values similar or are there big differences.
+
+```{r}
+# Convert kriging results from sf to sp object
+lzn.ukriged_sp <- as(lzn.ukriged, "Spatial")
+
+# Check the class
+head(lzn.ukriged_sp)
+
+# Also convert the measurement stations to sp object
+july_mean_temp_sp <- as(july_mean_temp, "Spatial")
+
+# Extract predicted values at observed locations
+july_mean_temp_sp$predicted <- sp::over(july_mean_temp_sp, lzn.ukriged_sp)$var1.pred
+
+plot(july_mean_temp_sp$predicted, july_mean_temp_sp$mean_temperature)
+     xlab = "Observed"
+     ylab = "Predicted"
+     main = "Observed vs Predicted"
+abline(0,1, col="red", lwd=2) # Ideal 1:1 line
+
+sum(is.na(july_mean_temp_sp$predicted))  # Count of NA values
+
+# Keep only complete rows
+clean_data <- july_mean_temp_sp[complete.cases(july_mean_temp_sp$predicted), ]
+
+length(july_mean_temp_sp$mean_temperature)
+length(july_mean_temp_sp$predicted)
+
+# Compute R-squared & RMSE
+cor(clean_data$mean_temperature, clean_data$predicted)
+sqrt(mean((clean_data$mean_temperature - clean_data$predicted)^2))
+```
+
+Leave-one-out cross-validation
+
+```{r}
+# Perform leave-one-out cross-validation
+lzn.kriged.cv <- krige.cv(log(norm_temperature) ~ 1, july_mean_temp, grid_points, model = lzn.fit)
+
+# Extract the results
+cv_results <- as.data.frame(lzn.kriged.cv)
+
+# View the results
+head(cv_results)
+```
+
+Explanation of the results:
+- Predicted Values (var1.pred) are the model's best estimate of the temperature.
+- Observed Values (observed) are the actual measurements.
+- Residuals (residual) are the errors between predictions and actual measurements.
+- Z-Scores (zscore) help to assess the significance of the residuals relative to expected variability.
+- Prediction Variance (var1.var) indicates uncertainty in the model's predictions.
+
+More information on z-scores:
+- A z-score around 0 means the residual is within the expected range, i.e., the prediction error is not large in comparison to the variability. 
+- A z-score far from 0 (e.g., > 2 or < -2) suggests a location where the model's prediction error is unusually large or small. These locations might warrant further inspection or could suggest areas where the model has poor performance.
+- Positive z-scores indicate that the observed values are larger than the predicted values (underestimation by the model), and negative z-scores indicate the opposite (overestimation by the model).
+
+
+
+Additional code for other analysis:
+
+Optional: Normalize the temperature data using elevation information -> might not be the best approach as the normalization is too simplistic for this analysis
+
+```{r}
+# Degrees C per meter -> standard parameter, needs to further investigated for future
+lapse_rate <- 0.0065  
+
+# Sea level as reference station
+reference_elevation <- 0  
+
+# Adjust temperatures for elevation effect
+july_mean_temp$norm_temperature <- july_mean_temp$mean_temperature + 
+                             (reference_elevation - july_mean_temp$elevation) * lapse_rate
+```
