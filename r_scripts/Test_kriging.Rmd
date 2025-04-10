@@ -29,17 +29,29 @@ mapviewOptions(fgb = FALSE)
 
 ```{r}
 # Read temperature points
-temp <- read_sf('../data/sensor_data_202407081200_7days.gpkg')
+temp <- read_sf('../data/sensor_data_20240107_31days.gpkg')
+
 temp
 ```
 
+Preprocessing temperature data
 ```{r}
 temp <- temp[!is.na(temp$temperature), ]  # Removes only rows where `temperature` is NA
 
-# Filter by specific date (ignoring the time)
-temp_subset <- temp %>% filter(format(`dateobserved-hourly`, "%Y-%m-%d") == '2023-07-08')
+# Calculate the monthly mean temperature for each station, keeping only July (month 7)
+july_mean_temp <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Filter only July
+  group_by(stationname, year = format(dateobserved, "%Y")) %>%  # Group by station and year
+  summarise(mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")  # Calculate mean temperature
 
-temp_subset
+# View the result
+july_mean_temp
+
+
+# Filter by specific date (ignoring the time)
+#temp_subset <- temp %>% filter(format(`dateobserved`, "%Y-%m-%d") == '2023-07-08')
+
+#temp_subset
 ```
 
 ```{r}
@@ -47,19 +59,26 @@ temp_subset
 mapview(temp['temperature'])
 ```
 
+Load AOI
+```{r}
+aoi_grid <- read_stars("../data/canopy_height_hd_mannheim_1m.tif")
+aoi_grid
+```
+
+
 Create a grid
 
 ```{r}
 bbox <- st_bbox(temp)
 bbox
 
-cell_size <- 0.0001797
+cell_size <- 10
 
 x <- seq(bbox$xmin, bbox$xmax, by=cell_size)
 y <- seq(bbox$ymin, bbox$ymax, by=cell_size)
 
 temp_grid <- expand.grid(x=x, y=y)
-#plot(temp_grid$x, temp_grid$y, pch=19, cex=0.1)
+plot(temp_grid$x, temp_grid$y, pch=19, cex=0.1)
 
 temp_grid$tmp <- 1
 temp_grid <- st_as_stars(temp_grid, crs=st_crs(temp))

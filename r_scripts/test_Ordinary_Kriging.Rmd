@@ -29,6 +29,7 @@ library("gridExtra")
 
 # Mapping & Interactive Visualization
 library("mapview") 
+library("tmap")
 ```
 
 Load the temperature measurements as input data
@@ -55,7 +56,6 @@ july_mean_temp <- temp %>%
   filter(format(dateobserved, "%m") == "07") %>%  # Keep only July
   group_by(stationname) %>%  # Group by individual station
   summarise(mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")  # Compute mean
-
 
 # View the result and class of the object
 july_mean_temp
@@ -174,27 +174,35 @@ plot2 <- ggplot(grid_points_df, aes(x = x, y = y)) +
 grid.arrange(plot1, plot2, ncol = 2)
 ```
 
+Histogram of data distribution for the calculated mean temperature
+
+```{r}
+hist(july_mean_temp$mean_temperature, breaks=20, main="Distribution of Mean Temperature in July", col="lightgrey")
+
+plot(density(july_mean_temp$mean_temperature), main = "Density of Mean Temperature in July")
+```
+
 Compute experimental variogram and fit model to the data
 
 ```{r}
 # Compute experimental variogram for log-transformed mean temperature
-lzn.vgm <- variogram(log(mean_temperature) ~ 1, july_mean_temp, width = 0.5, cutoff = 10) 
+v = variogram(mean_temperature~1, july_mean_temp)
 
 # Plot the sample variogram
-#plot(lzn.vgm)
+plot(v)
 
 # Fit an exponential variogram model to the sample variogram
-lzn.fit <- fit.variogram(lzn.vgm, model = vgm(1.5, "Exp", 5, 0.2))
+lzn.fit <- fit.variogram(v, model = vgm(psill = 1.5, model = "Sph", range = 3.5, nugget = 0.05))
 
 # Plot the sample variogram with the fitted model
-plot(lzn.vgm, lzn.fit)
+plot(v, lzn.fit)
 ```
 
 Run Ordinary Kriging
 
 ```{r}
 # Perform kriging interpolation for log-transformed normalized temperature  
-lzn.kriged <- krige(log(norm_temperature) ~ 1, july_mean_temp, grid_points, model=lzn.fit)
+lzn.kriged <- krige(mean_temperature ~ 1, july_mean_temp, grid_points, model=lzn.fit)
 ```
 
 Results of Ordinary Kriging
@@ -211,6 +219,39 @@ lzn.kriged %>% as.data.frame %>%
   scale_y_continuous(labels=comma) +
   theme_bw() +
   ggtitle("Kriging Prediction of Log-Transformed Elevation Normalized Temperature")
+```
+
+Plot the Kriging Variance (Uncertainty)
+High variance areas indicate uncertainty in predictions.
+
+```{r}
+spplot(lzn.kriged["var1.var"], main = "Kriging Variance (Uncertainty Map)")
+```
+
+Investigate observed vs. predicted values
+Are these values similar or are there big differences.
+
+```{r}
+# Extract predicted values at observed locations
+july_mean_temp$predicted <- over(july_mean_temp, lzn.kriged)$var1.pred  # Assuming 'var1.pred' is the prediction column
+
+plot(july_mean_temp$predicted, july_mean_temp$mean_temperature)
+     xlab = "Observed"
+     ylab = "Predicted"
+     main = "Observed vs Predicted"
+abline(0,1, col="red", lwd=2) # Ideal 1:1 line
+
+sum(is.na(july_mean_temp$predicted))  # Count of NA values
+
+# Keep only complete rows
+clean_data <- july_mean_temp[complete.cases(july_mean_temp$predicted), ]
+
+length(july_mean_temp$mean_temperature)
+length(july_mean_temp$predicted)
+
+# Compute R-squared & RMSE
+cor(clean_data$mean_temperature, clean_data$predicted)
+sqrt(mean((clean_data$mean_temperature - clean_data$predicted)^2))
 ```
 
 Leave-one-out cross-validation
@@ -237,3 +278,34 @@ More information on z-scores:
 - A z-score around 0 means the residual is within the expected range, i.e., the prediction error is not large in comparison to the variability. 
 - A z-score far from 0 (e.g., > 2 or < -2) suggests a location where the model's prediction error is unusually large or small. These locations might warrant further inspection or could suggest areas where the model has poor performance.
 - Positive z-scores indicate that the observed values are larger than the predicted values (underestimation by the model), and negative z-scores indicate the opposite (overestimation by the model).
+
+
+
+
+Test Kriging approach from here: https://www.youtube.com/watch?v=hPYx-LqHShI&ab_channel=OneFourFourExplains
+Pretty simple code for the same result. Here we just sampled a 1000 data points to check, how good the interpolation worked -> probably not the solution as a grid would be better suited.
+
+```{r}
+july_mean_temp_sp <- sp::SpatialPointsDataFrame(coords = st_coordinates(july_mean_temp), data = as.data.frame(july_mean_temp), proj4string = sp::CRS("+init=epsg:32632"))
+
+head(july_mean_temp_sp)
+
+samp = sp::spsample(x = july_mean_temp_sp, n = 1000, type = "random")
+
+var = gstat::variogram(object = mean_temperature~1, locations = july_mean_temp_sp)
+plot(var)
+
+fit_var <- gstat::fit.variogram(var, model = gstat::vgm(model = "Exp"))
+
+
+fit_var = gstat::fit.variogram(object = var, model = gstat::vgm(psill = 2.7, nugget = 0.05, range = 0.049, model = "Sph"))
+plot(var, model = fit_var)
+
+krig = gstat::krige(formula = mean_temperature~1, locations = july_mean_temp_sp, newdata = samp, model = fit_var)
+
+head(krig@data)
+
+tmap = tm_shape(shp = krig) + tm_dots(col = "var1.pred")
+tmap
+```
+
