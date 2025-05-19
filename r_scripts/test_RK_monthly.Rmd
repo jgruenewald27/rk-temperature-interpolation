@@ -1,0 +1,536 @@
+---
+title: "Test_Regression_Kriging_Monthly_Mean_Temperature"
+author: "Johannes Gruenewald"
+date: "2025-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+library(dplyr)
+library(magrittr)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+
+# Mapping & Interactive Visualization
+library(mapview)
+library(tmap)
+```
+
+--------------------------------------------------------------------------------
+
+Load the temperature measurements as input data
+
+```{r}
+# Read temperature points
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20240107_31days.gpkg')
+
+# Removes only rows where `temperature` is NA
+temp <- temp[!is.na(temp$temperature), ] 
+
+# Ensure dateobserved is in the correct date-time format
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
+```
+
+Preprocessing of the temperature data
+Calculate mean temperature for each measurement station for the month of July
+
+```{r}
+# Calculate the mean temperature for each station in July
+temp_mm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July
+  group_by(stationname) %>%  # Group by individual station
+  summarise(monthly_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")  # Compute mean
+```
+
+Reproject the temperature data
+
+```{r}
+temp_mm <- st_transform(temp_mm, crs="EPSG:32632")
+```
+
+--------------------------------------------------------------------------------
+
+Load and process environmental covariates
+
+Load Elevation
+
+```{r}
+# Load the elevation data
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem, y = crs(temp_mm))
+```
+
+Load Tree Canopy Height
+
+```{r}
+# Load the elevation data
+tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the elevation data to match correct CRS
+tch <- terra::project(tch, y = crs(temp_mm))
+
+# Check if the two covariates have the same crs
+crs(tch) == crs(dem)
+```
+
+Load Building Height
+
+```{r}
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
+
+# Reproject the elevation data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_mm))
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
+```
+
+--------------------------------------------------------------------------------
+
+Adding covariates to temperature data
+
+- Extract values from all the raster and add to temperature data at point locations
+
+```{r}
+# Extract raster values at the temp locations
+elevation_values <- terra::extract(dem, temp_mm)
+
+# Extract raster values at the temp locations
+building_height_values <- terra::extract(ghs_bh, temp_mm)
+
+# Extract tree canopy height values at the temp locations
+canopy_heigth_values <- terra::extract(tch, temp_mm)
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp_mm <- temp_mm %>%
+  mutate(elevation = elevation_values[[2]])
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp_mm <- temp_mm %>%
+  mutate(building_height = building_height_values[[2]])
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp_mm <- temp_mm %>%
+  mutate(tree_canopy_height = canopy_heigth_values[[2]])
+
+# Check the updated sf object
+print(temp_mm)
+```
+
+--------------------------------------------------------------------------------
+
+Check data distribution of environmental covariates
+Histogram to check data distribution
+
+- log-transformation of the data doesn't make sense because we have 0 values for Forest and Building Height at certain point locations.
+
+```{r}
+# Set up a 1-row, 3-column plotting area
+par(mfrow = c(1, 3))
+
+# Plot the histograms
+hist(temp_mm$elevation, main = "Elevation", xlab = "Elevation [m]", col = "lightblue")
+hist(temp_mm$tree_canopy_height, main = "Global Forest Canopy Height", xlab = "Height [m]", col = "lightgreen")
+hist(temp_mm$building_height, main = "Average of the Gross Building Height", xlab = "Height [m]", col = "lightcoral")
+```
+
+Visualize relationships between monthly mean temperature and environmental factors
+
+```{r}
+plot(temp_mm$tree_canopy_height, temp_mm$monthly_mean_temperature, 
+     main = "Monthly Mean Temperature vs Global Forest Canopy Height", 
+     xlab = "Forest Canopy Height [m]", 
+     ylab = "Monthly Mean Temperature [°C]")
+
+abline(lm(temp_mm$monthly_mean_temperature ~ temp_mm$tree_canopy_height), col = "red")
+
+plot(temp_mm$building_height, temp_mm$monthly_mean_temperature, 
+     main = "Monthly Mean Temperature vs Average of the Gross Building Height (AGBH)", 
+     xlab = "AGBH [m]", 
+     ylab = "Monthly Mean Temperature [°C]")
+
+abline(lm(temp_mm$monthly_mean_temperature ~ temp_mm$building_height), col = "red")
+
+plot(temp_mm$elevation, temp_mm$monthly_mean_temperature, 
+     main = "Monthly Mean Temperature vs Elevation", 
+     xlab = "Elevation [m]", 
+     ylab = "Monthly Mean Temperature [°C]")
+
+abline(lm(temp_mm$monthly_mean_temperature ~ temp_mm$elevation), col = "red")
+```
+
+Calculate Spearman
+Explanation why I chose Spearman:
+- Pearson’s correlation assumes both normality and linearity in the relationship between X and Y. 
+- Spearman’s correlation has less stringent assumptions, assuming only that the relationship is monotonic. This means that the relationship has to be consistently increasing or decreasing, but that it does not have to do so in a linear manner (see left). 
+- Spearman’s correlation also performs better than Pearson’s correlation in instances where there are outliers or very few data point -> this is the case for my data.
+
+```{r}
+cor.test(temp_mm$elevation, temp_mm$monthly_mean_temperature, method = "spearman")
+
+cor.test(temp_mm$tree_canopy_height, temp_mm$monthly_mean_temperature, method = "spearman")
+
+cor.test(temp_mm$building_height, temp_mm$monthly_mean_temperature, method = "spearman")
+```
+
+Spearman’s test is non-parametric and based on ranking the values. It assumes that all values are distinct so that ranks are unique. When ties occur (e.g., two identical temperatures or building heights) the exact p-value can't be computed. So for these results, p-value can't be fully trusted (elevation has a statistically significant relationship with temperature) be the correlation coefficient (rho) can still be trusted.
+It is also an influencing factor, that I only work with n=31 data points
+
+--------------------------------------------------------------------------------
+
+GAM Model
+Generalized Additive Models for each of the covariates
+
+```{r}
+gam_elev <- gam(monthly_mean_temperature ~ s(elevation), data = temp_mm)
+summary(gam_elev)
+```
+```{r}
+gam_tch <- gam(monthly_mean_temperature ~ s(tree_canopy_height), data = temp_mm)
+summary(gam_tch)
+```
+
+```{r}
+gam_bh <- gam(monthly_mean_temperature ~ s(building_height), data = temp_mm)
+summary(gam_bh)
+```
+
+GAM for all three covariates
+
+```{r}
+gam_all <- gam(monthly_mean_temperature ~ 
+                  s(elevation) + 
+                  s(tree_canopy_height) + 
+                  s(building_height), 
+                data = temp_mm)
+summary(gam_all)
+```
+
+Example: Visualize the results
+
+```{r}
+# Vary elevation across its range; fix the others at their median
+predict_temp <- data.frame(
+  elevation = seq(min(temp_mm$elevation), max(temp_mm$elevation), length.out = 20),
+  tree_canopy_height = median(temp_mm$tree_canopy_height),
+  building_height = median(temp_mm$building_height)
+)
+
+# Predict using the full GAM model
+predictions <- predict(gam_all, newdata = predict_temp, type = "response", se.fit = TRUE)
+
+# Plot the data and the GAM fit
+ggplot() +
+  geom_point(data = temp_mm, aes(x = elevation, y = monthly_mean_temperature)) +
+  geom_line(data = data.frame(elevation = predict_temp$elevation, monthly_mean_temp = predictions$fit), 
+            aes(x = elevation, y = monthly_mean_temp), color = "blue", size = 1) +
+  geom_ribbon(data = data.frame(elevation = predict_temp$elevation, fit = predictions$fit, 
+                                se = predictions$se.fit), aes(x = elevation, 
+                                ymin = fit - 1.96 * se, 
+                                ymax = fit + 1.96 * se), alpha = 0.3) +
+  labs(title = "GAM Fit for Monthly Mean Temperature vs. Elevation", 
+       x = "Elevation [m]", y = "Monthly Mean Temperature [°C]") +
+  theme_minimal()
+```
+
+```{r}
+# Vary elevation across its range; fix the others at their median
+predict_temp <- data.frame(
+  tree_canopy_height = seq(min(temp_mm$tree_canopy_height), max(temp_mm$tree_canopy_height), length.out = 20),
+  elevation = median(temp_mm$elevation),
+  building_height = median(temp_mm$building_height)
+)
+
+# Predict using the full GAM model
+predictions <- predict(gam_all, newdata = predict_temp, type = "response", se.fit = TRUE)
+
+# Plot the data and the GAM fit
+ggplot() +
+  geom_point(data = temp_mm, aes(x = tree_canopy_height, y = monthly_mean_temperature)) +
+  geom_line(data = data.frame(tree_canopy_height = predict_temp$tree_canopy_height, monthly_mean_temp = predictions$fit), 
+            aes(x = tree_canopy_height, y = monthly_mean_temp), color = "blue", size = 1) +
+  geom_ribbon(data = data.frame(tree_canopy_height = predict_temp$tree_canopy_height, fit = predictions$fit, 
+                                se = predictions$se.fit), aes(x = tree_canopy_height, 
+                                ymin = fit - 1.96 * se, 
+                                ymax = fit + 1.96 * se), alpha = 0.3) +
+  labs(title = "GAM Fit for Monthly Mean Temperature vs. Forest Tree Canopy Height", 
+       x = "Forest Tree Canopy Height [m]", y = "Monthly Mean Temperature [°C]") +
+  theme_minimal()
+```
+
+Get the residuals from the fitted GAM model with the three environmental covariates
+
+```{r}
+gam_all$residuals
+
+temp_mm$gam_residuals <- gam_all$residuals
+```
+--------------------------------------------------------------------------------
+
+Still some confusion here
+
+Create prediction locations for the kriging process including the covariates
+
+```{r}
+# Convert raster to points, including values, and remove NAs
+predLocations <- terra::as.points(dem, values=TRUE, na.rm=TRUE)
+
+# Reproject the elevation data to match correct CRS
+predLocations <- terra::project(predLocations, y = crs(temp_mm))
+
+# Check CRS of locations
+crs(predLocations)
+
+# Convert the points to a SpatialPointsDataFrame
+predLocations <- as(predLocations, "Spatial")
+
+# Convert sf object to sp object
+temp_mm_sp <- as(temp_mm, "Spatial")
+
+# Set CRS of predLocations_sp to match july_mean_temp
+sp::proj4string(predLocations) == sp::proj4string(temp_mm_sp)
+
+# Display the updated gridded points
+class(predLocations)
+```
+
+```{r}
+# 4. Fit variogram to residuals
+fitted <- autofitVariogram(gam_residuals ~ 1, input_data = temp_mm)
+fitted_vgm <- fitted$var_model
+plot(fitted$exp_var, fitted$var_model)
+```
+
+```{r}
+# 6. Interpolate residuals by kriging
+kriged_resid <- krige(gam_residuals ~ 1,
+                      loc = temp_mm_sp,
+                      newdata = predLocations,
+                      model = fitted_vgm)
+```
+
+```{r}
+cv_results <- krige.cv(gam_residuals ~ 1, 
+                       locations = temp_mm_sp, 
+                       model = fitted_vgm)
+
+# Check error metrics
+summary(cv_results$var1.pred - cv_results$observed)  # Mean error
+sqrt(mean((cv_results$var1.pred - cv_results$observed)^2))  # RMSE
+
+```
+
+```{r}
+# Step 1: Predict GAM component at kriging locations
+gam_pred <- predict(gam_all, newdata = predLocations)
+
+# Step 2: Get kriged residuals
+kriged_resid_values <- kriged_resid$var1.pred
+
+# Step 3: Combine both
+final_pred <- gam_pred + kriged_resid_values
+```
+
+
+
+```{r}
+predResidHDRas <- raster::brick(kriged_resid)
+```
+
+```{r}
+#tmap_mode("plot")
+tm_shape(subset(predTempHDRas, subset = "var1.pred")) + 
+  tm_raster(col="var1.pred", title = "Prediction [°C]", n=9, 
+            legend.reverse = TRUE, palette = "-RdBu") +
+  tm_shape(july_mean_temp) + 
+  tm_symbols(col="mean_temperature", title.col = "Observed [°C]", 
+             legend.col.reverse = TRUE, palette = "-BrBG", 
+             border.col = "black", size=.1, alpha=.9) +
+  tm_scale_bar() + 
+  tm_layout(title = "Temperature interpolation, HD", 
+            legend.outside = TRUE, attr.outside = TRUE)
+```
+
+
+--------------------------------------------------------------------------------
+
+Linear regression models may be too simplistic and fail to accurately capture the correlation between temperature measurements and selected covariates. They were tested here to see if they might still produce meaningful results.
+
+Multiple Linear Rregression (MLR)
+
+```{r}
+model <- lm(mean_temperature ~ elevation + tree_canopy_height + building_height, data = july_mean_temp)
+
+# Print model summary
+summary(model)
+
+plot(model)  # Look for non-random patterns in residuals
+```
+
+Stepwise MLR
+
+```{r}
+# stepwise variable selection
+model.MLR.step <- step(model, direction="both")
+
+# summary of the new model using stepwise covariates selection
+summary(model.MLR.step)
+```
+
+Interpretation of MLR performance
+
+```{r}
+# graphical diagnosis of the regression analysis
+par(mfrow=c(2,2))
+plot(model.MLR.step)
+par(mfrow=c(1,1))
+```
+
+GLS model
+
+```{r}
+# Extract coordinates (assuming `geom` is the column with spatial data)
+july_mean_temp$coords <- st_coordinates(july_mean_temp$geom)
+
+# Separate the coordinates into `x` and `y` columns
+july_mean_temp$x <- july_mean_temp$coords[, 1]
+july_mean_temp$y <- july_mean_temp$coords[, 2]
+
+gls_model <- gls(mean_temperature ~ elevation + tree_canopy_height + building_height,
+                 data = july_mean_temp,
+                 correlation = corExp(form = ~ x + y, nugget = TRUE))
+
+summary(gls_model)
+```
+
+--------------------------------------------------------------------------------
+
+Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
+
+Try RF
+
+```{r}
+# 2. Fit Random Forest model
+rf_model <- randomForest(
+  mean_temperature ~ elevation + tree_canopy_height + building_height,
+  data = july_mean_temp,
+  ntree = 500,
+  importance = TRUE,
+  na.action = na.omit
+)
+
+# View basic model summary
+print(rf_model)
+
+# View variable importance
+importance(rf_model)
+varImpPlot(rf_model)
+```
+
+```{r}
+# 3. Predict and calculate residuals
+july_mean_temp$rf_pred <- predict(rf_model)
+july_mean_temp$residuals <- july_mean_temp$mean_temperature - july_mean_temp$rf_pred
+```
+
+
+```{r}
+# 4. Fit variogram to residuals
+fitted <- autofitVariogram(residuals ~ 1, input_data = july_mean_temp)
+fitted_vgm <- fitted$var_model
+plot(fitted$exp_var, fitted$var_model)
+```
+
+Create prediction locations for the kriging process including the covariates
+
+```{r}
+# Convert raster to points, including values, and remove NAs
+predLocations <- terra::as.points(dem, values=TRUE, na.rm=TRUE)
+
+# Reproject the elevation data to match correct CRS
+predLocations <- terra::project(predLocations, y = crs(july_mean_temp))
+
+# Check CRS of locations
+crs(predLocations)
+
+# Convert the points to a SpatialPointsDataFrame
+predLocations <- as(predLocations, "Spatial")
+
+# Convert sf object to sp object
+july_mean_temp_sp <- as(july_mean_temp, "Spatial")
+
+# Set CRS of predLocations_sp to match july_mean_temp
+sp::proj4string(predLocations) == sp::proj4string(july_mean_temp_sp)
+
+# Display the updated gridded points
+class(predLocations)
+```
+
+```{r}
+# 6. Interpolate residuals by kriging
+kriged_resid <- krige(residuals ~ 1,
+                      loc = july_mean_temp_sp,
+                      newdata = predLocations,
+                      model = fitted_vgm)
+```
+
+```{r}
+# 10. Model performance metrics on training data
+obs <- july_mean_temp$mean_temperature
+pred_rf <- july_mean_temp$rf_pred
+resid <- july_mean_temp$residuals
+
+# R², RMSE, MAE
+r2_rf <- 1 - sum((obs - pred_rf)^2) / sum((obs - mean(obs))^2)
+rmse_rf <- sqrt(mean((obs - pred_rf)^2))
+mae_rf <- mean(abs(obs - pred_rf))
+
+cat("Random Forest Performance:\n")
+cat("R² =", round(r2_rf, 3), "\n")
+cat("RMSE =", round(rmse_rf, 3), "\n")
+cat("MAE =", round(mae_rf, 3), "\n\n")
+
+# 11. Moran's I on residuals (check spatial autocorrelation)
+coords_mat <- coordinates(july_mean_temp_sp)
+nb <- knn2nb(knearneigh(coords_mat, k = 4))
+lw <- nb2listw(nb)
+moran_result <- moran.test(resid, lw)
+print(moran_result)
+
+# 12. Cross-validation of kriging residuals
+kr_cv <- krige.cv(residuals ~ 1, locations = july_mean_temp_sp, model = fitted_vgm)
+cat("Kriging Cross-Validation:\n")
+summary(kr_cv$residual)
+```
+
