@@ -1,0 +1,57 @@
+---
+title: "Semivariogram modeling"
+author: "Johannes Gruenewald"
+date: "2025-02-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(gstat)
+library(raster)
+library(moments)
+library(spdep)
+library(sf)
+library(dplyr)
+
+```
+
+```{r}
+# Read temperature points
+temp <- read_sf('../data/sensor_data_202407081200_7days.gpkg')
+temp
+```
+
+```{r}
+# Filter by specific date (ignoring the time)
+temp_subset <- temp %>% filter(format(`dateobserved-hourly`, "%Y-%m-%d") == '2023-07-09')
+
+temp_subset
+```
+
+
+```{r}
+temp <- temp[!is.na(temp$temperature), ]  # Removes only rows where `temperature` is NA
+
+v.cloud<-variogram(temperature~ 1, data = temp_subset, cloud=T)
+head(v.cloud)
+
+plot(v.cloud, main = "Variogram cloud", xlab = "Separation distance (m)")
+```
+
+```{r}
+v<-variogram(temperature~ 1, data = temp_subset, cloud=F)
+
+plot(v, main = "Variogram - default", xlab = "Separation distance (m)")
+```
+
+```{r}
+hist(temp_subset$temperature,
+     main= "Distribution of temp")
+```
+
+

@@ -1,0 +1,44 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+rm(list=ls()) # remove all variables from worspace
+
+filename = "../data/sensor_data_202407081200_7days.csv"
+a<-read.csv(filename)
+a <- a[!is.na(a$temperature), ]  # Keep only rows where 'temperature' is NOT NA
+```
+
+```{r}
+plot(a$x,a$y)
+```
+
+```{r}
+hist(a$temperature)
+```
+
+```{r}
+l = seq(-3,3,by=0.25) # an array containing all lambdas I am going to test
+d=array(data=NA,dim=length(l)) # initialize d's (my metric for testing the quality of the transformation)
+
+for (i in 1:length(l)) { # iterate through all elements i in l
+if (l[i] != 0) { # only in case l is not equal to 0
+tTF = (a$temperature^l[i]-1)/l[i] 
+} else { # if l is equal to zero -> log transform
+  tTF = log(a$temperature) 
+  }
+
+d[i] = (mean(tTF) - median(tTF))/IQR(tTF) # calculate the d for each transformed set
+}
+```
+
+```{r}
+plot(l,d^2)
+```
+
+```{r}
+(l[which(d^2==min(d^2))]) # lambda for the smallest d
+```
+

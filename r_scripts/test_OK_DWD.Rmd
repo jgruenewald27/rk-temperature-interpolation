@@ -1,0 +1,352 @@
+---
+title: "test_OK_DWD"
+author: "Johannes Gruenewald"
+date: "2025-03-24"
+output: html_document
+---
+
+```{r}
+# Load packages
+# Spatial Data Handling & Processing
+library("sf")      
+library("sp")
+library("terra")    
+library("stars")   
+
+# Spatial Analysis & Interpolation
+library("gstat")  
+
+# Data Manipulation & Wrangling
+library("tidyverse")  # Includes ggplot2, dplyr, etc.
+library("dplyr")
+library("magrittr")  
+
+# Data Visualization
+library("ggplot2") 
+library("scales")
+library("gridExtra") 
+
+# Mapping & Interactive Visualization
+library("mapview") 
+```
+
+Load the DWD temperature measurements as input data
+
+```{r}
+# Read temperature points
+temp <- read_sf('../data/DWD/DWD_Temperatur_1991-2020.gpkg')
+
+# Drop all NA values
+temp <- na.omit(temp)
+
+class(temp)
+```
+
+```{r}
+mapview(temp)
+```
+
+Load Tree Canopy Height as covariate
+
+```{r}
+# Load the data
+tree_canopy <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tree_canopy[tree_canopy == 101] <- NA
+
+# Reproject raster to match temperature data
+tree_canopy <- terra::project(tree_canopy, y = crs(temp))
+
+# Check if the two covariates have the same crs
+crs(tree_canopy) == crs(dem)
+```
+
+Load DEM as covariate
+
+```{r}
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+```
+
+Reproject DEM
+
+```{r}
+# Reproject raster to match temperature data
+dem <- terra::project(dem, y = crs(temp))
+```
+
+Resample tree canopy height raster to match resolution of elevation
+raster 
+
+- dem has a coarser resultion
+
+```{r}
+# Check the spatial resolution of both rasters
+message("Resolution of Elevation data: ",res(dem))
+message("Resolution of Tree Canopy Height data: ",res(tree_canopy))
+
+# Resample tree_canopy to match the resolution and alignment of dem
+tree_canopy_resampled <- resample(tree_canopy, dem, method = "bilinear")
+
+# Combine dem and resampled tree_canopy into a single raster stack
+raster_stack <- c(dem, tree_canopy_resampled)
+
+message("Resolution of resampled data: ",res(raster_stack))
+```
+
+Adding covariates to temperature data
+
+- Extract values from raster and add to temperature data
+
+```{r}
+# Extract raster values at the temp locations
+elevation_values <- terra::extract(dem, temp)
+
+# View the extracted values
+print(elevation_values)
+
+# Extract tree canopy height values at the temp locations
+canopy_heigth_values <- terra::extract(tree_canopy_resampled, temp)
+
+# View the extracted values
+print(canopy_heigth_values)
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp <- temp %>%
+  mutate(elevation = elevation_values[[2]])
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp <- temp %>%
+  mutate(tree_canopy_height = canopy_heigth_values[[2]])
+
+# Check the updated sf object
+print(temp)
+```
+
+Explorative data analysis - check the effect of covariates 
+
+- run linear model to check for effects in the data
+
+```{r}
+# Fit a linear model to assess the relationship between temperature and covariates
+g <- lm(Jahr ~ elevation + tree_canopy_height, data= temp)
+summary(g)
+```
+
+
+OLDER CODE
+
+
+
+Optional: Get elevation information at point locations
+
+```{r}
+# Get elevation at the sites
+elevation <- terra::extract(dem, temp, buffer=0)
+
+# Rename the extracted column to "elevation"
+names(elevation)[names(elevation) != "ID"] <- "elevation"
+
+# Add the elevation data to the temperature data
+temp$elevation <- elevation$elevation
+```
+
+Optional: Normalize the temperature data using elevation information
+
+```{r}
+# Degrees C per meter -> standard parameter, needs to further investigated for future
+lapse_rate <- 0.0065  
+
+# Sea level as reference station
+reference_elevation <- 0  
+
+# Adjust temperatures for elevation effect
+july_mean_temp$norm_temperature <- july_mean_temp$mean_temperature + 
+                             (reference_elevation - july_mean_temp$elevation) * lapse_rate
+```
+
+Transform temperature data to SpatialPointsDataFrame
+
+```{r}
+# Ensure the data has point geometry
+if (st_geometry_type(temp)[1] == "POINT") {
+  temp <- as(temp, "Spatial")
+} else {
+  stop("The dataset does not contain point geometry.")
+}
+
+class(temp)
+```
+
+Get boundaries of bounding box to create grid for interpolation
+
+```{r}
+bbox(temp)
+```
+
+Create a grid for the interpolation
+-> grid resolution can be adapted if more precise kriging result are being used
+
+```{r}
+# Extract the bounding box from july_mean_temp
+bbox_values <- bbox(temp)
+
+# Define the grid resolution
+res <- 0.09009  # ~10 km in degrees (latitude or longitude)
+
+# Create grid coordinates within the bounding box
+x_range <- seq(bbox_values[1, 1], bbox_values[1, 2], by = res)  # Longitude (coords.x1)
+y_range <- seq(bbox_values[2, 1], bbox_values[2, 2], by = res)  # Latitude (coords.x2)
+
+# Create the grid from the longitude and latitude ranges
+grid_points <- expand.grid(x = x_range, y = y_range)
+
+# Convert to a spatial grid an create grid from the points
+coordinates(grid_points) <- ~ x + y
+gridded(grid_points) <- TRUE
+
+# Assign the same CRS as the temp datato the grid
+proj4string(grid_points) <- proj4string(temp)
+
+# Visualize the grid for checking
+plot(grid_points, main = "Grid Surface over Bounding Box Area")
+```
+
+Compute experimental variogram and fit model to the data (log)
+
+```{r}
+v = variogram(log(Juli)~1, temp)
+
+v.fit.exp = fit.variogram(v, vgm("Exp"))
+
+# This model was chosen as it described the data the best
+v.fit.sph = fit.variogram(v, vgm("Sph"))
+
+v.fit.exp
+v.fit.sph
+```
+
+Fit model
+
+```{r}
+# Fit an spherical variogram model to the sample variogram
+lzn.fit <- fit.variogram(v, model = vgm(psill = 0.004216975, model = "Sph", range = 200.7777, nugget = 0.003206950))
+
+# Model was discarded because the error Warnung: Covariance matrix singular at location occured
+#lzn.fit.exp <- fit.variogram(v, model = vgm(psill = 0.004981406, model = "Exp", range = 95.01896, nugget = 0.002867702))
+
+# Plot the sample variogram with the fitted model
+plot(v, lzn.fit)
+```
+
+Run Ordinary Kriging
+
+```{r}
+# Perform kriging interpolation for DWD temperature  
+lzn.kriged <- krige(log(Juli) ~ 1, temp, grid_points, model=lzn.fit)
+```
+
+Plot prediction results of Ordinary Kriging
+
+```{r}
+# Convert kriging results to a data frame and visualize the predicted values
+# Create a heatmap for the predicted values
+lzn.kriged %>% as.data.frame %>%
+  ggplot(aes(x=x, y=y)) + 
+  geom_tile(aes(fill=var1.pred)) + 
+  coord_equal() +
+  scale_fill_gradient(low = "yellow", high="red") +
+  scale_x_continuous(labels=comma) +
+  scale_y_continuous(labels=comma) +
+  theme_bw() +
+  ggtitle("Kriging Prediction of multi-annual mean Temperature")
+```
+
+Plot the Kriging Variance (Uncertainty)
+High variance areas indicate uncertainty in predictions.
+
+```{r}
+spplot(lzn.kriged["var1.var"], main = "Kriging Variance (Uncertainty Map)")
+```
+
+Investigate observed vs. predicted values
+Are these values similar or are there big differences.
+
+```{r}
+# Extract predicted values at observed locations
+temp$predicted <- over(temp, lzn.kriged)$var1.pred  # Assuming 'var1.pred' is the prediction column
+
+plot(temp$predicted, log(temp$Juli),
+     xlab = "Observed", ylab = "Predicted", main = "Observed vs Predicted")
+abline(0,1, col="red", lwd=2) # Ideal 1:1 line
+
+length(temp$Juli)
+length(temp$predicted)
+
+# Correlation between the two variables
+cor(log(temp$Juli), temp$predicted)  # R-squared
+sqrt(mean((log(temp$Juli) - temp$predicted)^2))  # RMSE
+```
+
+Leave-one-out cross-validation
+
+```{r}
+# Perform leave-one-out cross-validation
+lzn.kriged.cv <- krige.cv(Juli ~ 1, temp, grid_points, model = lzn.fit)
+
+# Extract the results
+cv_results <- as.data.frame(lzn.kriged.cv)
+
+# View the results
+head(cv_results)
+```
+
+Explanation of the results:
+- Predicted Values (var1.pred) are the model's best estimate of the temperature.
+- Observed Values (observed) are the actual measurements.
+- Residuals (residual) are the errors between predictions and actual measurements.
+- Z-Scores (zscore) help to assess the significance of the residuals relative to expected variability.
+- Prediction Variance (var1.var) indicates uncertainty in the model's predictions.
+
+More information on z-scores:
+- A z-score around 0 means the residual is within the expected range, i.e., the prediction error is not large in comparison to the variability. 
+- A z-score far from 0 (e.g., > 2 or < -2) suggests a location where the model's prediction error is unusually large or small. These locations might warrant further inspection or could suggest areas where the model has poor performance.
+- Positive z-scores indicate that the observed values are larger than the predicted values (underestimation by the model), and negative z-scores indicate the opposite (overestimation by the model).
+
+
+Try to run the same code with original temp data values and not log transformed 
+-> output does not make sense as the data distribution is extremely right-skewed and the kriging process always yields the error: Warnung: Covariance matrix singular at location
+
+```{r}
+hist(temp$Juli, breaks=30, main="Distribution of Juli", col="lightblue")
+summary(temp$Juli)
+```
+
+Fit model
+
+```{r}
+v = variogram(Juli~1, temp)
+
+v.fit.exp = fit.variogram(v, vgm("Exp"))
+
+# This model was chosen as it best described the data
+v.fit.sph = fit.variogram(v, vgm("Sph"))
+
+v.fit.exp
+v.fit.sph
+
+# Fit an spherical variogram model to the sample variogram
+lzn.fit <- fit.variogram(v, model = vgm(psill = 1.0143641, model = "Sph", range = 171.0473, nugget = 0.7049859))
+
+# Plot the sample variogram with the fitted model
+plot(v, lzn.fit)
+```
+
+Run Ordinary Kriging -> process only outputs Warnung: Covariance matrix singular at location -> it also takes forever to load 
+-> Hypothesis: this approach is not working for this analysis due to the right-skewed distribution of the temp data
+
+```{r}
+# Perform kriging interpolation for DWD temperature  
+lzn.kriged <- krige(Juli ~ 1, temp, grid_points, model=lzn.fit)
+```
