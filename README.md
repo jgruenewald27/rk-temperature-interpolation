@@ -17,6 +17,7 @@ The chosen method for interpolation is regression kriging, which combines linear
 - Global Average Gross Building Height 
 - Elevation
 - Proximity to Water Bodies (TBD)
+
 A central aim of this thesis is to evaluate whether a complex locally adapted regression kriging model, incorporating these environmental covariates, significantly improves interpolation results compared to a simpler regression-only approach that derives a correction factor without spatial correlation modelling.
 An additional objective is to ensure that the methodology is scalable to other regions. For this reason, the analysis will be based exclusively on globally available datasets for the covariates, increasing its potential for replication and application in diverse geographic contexts.
 Finally, the thesis will examine the influence of data quality and spatial distribution of climate observations on interpolation outcomes. This analysis is essential for assessing the robustness of the approach and understanding its limitations in scenarios with sparse or unevenly distributed data.
