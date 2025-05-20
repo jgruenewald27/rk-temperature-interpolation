@@ -19,6 +19,7 @@ library(spdep)
 
 # Spatial Analysis & Interpolation
 library(gstat)
+library(caTools)
 library(randomForest)
 library(nlme)
 library(automap)
@@ -61,9 +62,9 @@ Calculate mean temperature for each measurement station for the month of July
 ```{r}
 # Calculate the mean temperature for each station in July
 temp_mm <- temp %>%
-  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July
-  group_by(stationname) %>%  # Group by individual station
-  summarise(monthly_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")  # Compute mean
+  filter(format(dateobserved, "%m") == "07") %>%
+  group_by(stationname) %>%
+  summarise(monthly_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")
 ```
 
 Reproject the temperature data
@@ -382,6 +383,89 @@ tm_shape(subset(predTempHDRas, subset = "var1.pred")) +
             legend.outside = TRUE, attr.outside = TRUE)
 ```
 
+--------------------------------------------------------------------------------
+
+Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
+
+Splitting the data in train and test data
+
+```{r}
+nrow(temp_mm)
+
+# Splitting data in train and test data
+split_mm <- sample.split(temp_mm$monthly_mean_temperature, SplitRatio = 0.7)
+length(split_mm)
+
+train_mm <- subset(temp_mm, split_mm == "TRUE")
+test_mm <- subset(temp_mm, split_mm == "FALSE")
+```
+
+Fit the Random Forest Model
+
+```{r}
+#make this example reproducible
+set.seed(10)
+
+#fit the random forest model
+rf_model_mm <- randomForest(
+  formula = monthly_mean_temperature ~ elevation + tree_canopy_height + building_height,
+  data = train_mm,
+  mtry = 3,
+  importance = TRUE,
+  na.action = na.omit
+)
+
+rf_model_mm
+importance(rf_model_mm)
+
+#find number of trees that produce lowest test MSE
+which.min(rf_model_mm$mse)
+
+#find RMSE of best model
+sqrt(rf_model_mm$mse[which.min(rf_model_mm$mse)]) 
+
+#plot the test MSE by number of trees
+plot(rf_model_mm)
+
+#Importance plot
+importance(rf_model_mm)
+
+#produce variable importance plot
+varImpPlot(rf_model_mm) 
+```
+
+Tune the model
+This function produces the following plot, which displays the number of predictors used at each split when building the trees on the x-axis and the out-of-bag estimated error on the y-axis:
+
+```{r}
+model_tuned_mm <- tuneRF(
+  x = data.frame(
+    elevation = train_mm$elevation,
+    building_height = train_mm$building_height,
+    tree_canopy_height = train_mm$tree_canopy_height
+  ),
+  y = train_mm$monthly_mean_temperature,  # define response variable
+  ntreeTry = 500,
+  mtryStart = 3,
+  stepFactor = 1.5,
+  improve = 0.01,
+  trace = FALSE  # don't show real-time progress
+)
+```
+
+We can see that the lowest OOB error is achieved by using 3 randomly chosen predictors at each split when building the trees.
+
+Use the Final Model to Make Predictions and derive Residuals
+
+```{r}
+# Predict on training data
+predicted_mm_rf <- predict(rf_model_mm, newdata=test_mm)
+
+# Calculate residuals: observed - predicted
+residuals_mm_rf <- temp_mm$monthly_mean_temperature - predicted_mm_rf
+
+plot(residuals_mm_rf)
+```
 
 --------------------------------------------------------------------------------
 
@@ -436,34 +520,6 @@ summary(gls_model)
 
 --------------------------------------------------------------------------------
 
-Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
-
-Try RF
-
-```{r}
-# 2. Fit Random Forest model
-rf_model <- randomForest(
-  mean_temperature ~ elevation + tree_canopy_height + building_height,
-  data = july_mean_temp,
-  ntree = 500,
-  importance = TRUE,
-  na.action = na.omit
-)
-
-# View basic model summary
-print(rf_model)
-
-# View variable importance
-importance(rf_model)
-varImpPlot(rf_model)
-```
-
-```{r}
-# 3. Predict and calculate residuals
-july_mean_temp$rf_pred <- predict(rf_model)
-july_mean_temp$residuals <- july_mean_temp$mean_temperature - july_mean_temp$rf_pred
-```
-
 
 ```{r}
 # 4. Fit variogram to residuals
@@ -496,6 +552,8 @@ sp::proj4string(predLocations) == sp::proj4string(july_mean_temp_sp)
 # Display the updated gridded points
 class(predLocations)
 ```
+
+
 
 ```{r}
 # 6. Interpolate residuals by kriging

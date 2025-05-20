@@ -9,35 +9,38 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
 ```{r}
-# Load packages
 # Spatial Data Handling & Processing
-library("sf")      
-library("sp")
-library("terra")    
-library("stars")   
+library(sf)
+library(sp)
+library(terra)
+library(stars)
 library(spdep)
 
 # Spatial Analysis & Interpolation
-library(gstat)  
+library(gstat)
 library(randomForest)
 library(nlme)
 library(automap)
+library(mgcv)
 
 # Data Manipulation & Wrangling
-library("tidyverse")  # Includes ggplot2, dplyr, etc.
-library("dplyr")
-library("magrittr")  
+library(tidyverse)
+library(dplyr)
+library(magrittr)
 
 # Data Visualization
-library("ggplot2") 
-library("scales")
-library("gridExtra") 
+library(ggplot2)
+library(scales)
+library(gridExtra)
 
 # Mapping & Interactive Visualization
-library("mapview") 
-library("tmap")
+library(mapview)
+library(tmap)
 ```
+
+--------------------------------------------------------------------------------
 
 Load the temperature measurements as input data
 
@@ -53,29 +56,27 @@ temp <- temp %>%
   mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
 ```
 
-Pre-processing of the temperature data
-
+Preprocessing of the temperature data
 Calculate mean temperature for each measurement station for each day for the month of July
 
 ```{r}
 # Calculate daily mean temperature for each station in July
 temp_dm <- temp %>%
-  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July
-  mutate(date = as.Date(dateobserved)) %>%  # Extract date (drop time)
-  group_by(stationname, date) %>%  # Group by station and day
+  filter(format(dateobserved, "%m") == "07") %>%
+  mutate(date = as.Date(dateobserved)) %>%
+  group_by(stationname, date) %>%
   summarise(daily_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")
-
-# View the result
-head(temp_dm)
-class(temp_dm)
 ```
 
 Reproject the temperature data
 
 ```{r}
 temp_dm <- st_transform(temp_dm, crs="EPSG:32632")
-st_crs(temp_dm)
 ```
+
+--------------------------------------------------------------------------------
+
+Load and process environmental covariates
 
 Load Elevation
 
@@ -85,9 +86,6 @@ dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
 dem <- terra::project(dem, y = crs(temp_dm))
-
-# Check if CRS is correct
-crs(dem)
 ```
 
 Load Tree Canopy Height
@@ -117,8 +115,10 @@ ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE
 ghs_bh <- terra::project(ghs_bh, y = crs(temp_dm))
 
 # Check if CRS is correct
-crs(ghs_bh)
+crs(ghs_bh) == crs(dem)
 ```
+
+--------------------------------------------------------------------------------
 
 Adding covariates to temperature data
 
@@ -128,20 +128,11 @@ Adding covariates to temperature data
 # Extract raster values at the temp locations
 elevation_values <- terra::extract(dem, temp_dm)
 
-# View the extracted values
-print(elevation_values)
-
 # Extract raster values at the temp locations
 building_height_values <- terra::extract(ghs_bh, temp_dm)
 
-# View the extracted values
-print(building_height_values)
-
 # Extract tree canopy height values at the temp locations
 canopy_heigth_values <- terra::extract(tch, temp_dm)
-
-# View the extracted values
-print(canopy_heigth_values)
 
 # Use dplyr to add the extracted values as a new column in the sf object
 temp_dm <- temp_dm %>%
@@ -158,6 +149,96 @@ temp_dm <- temp_dm %>%
 # Check the updated sf object
 print(temp_dm)
 ```
+
+--------------------------------------------------------------------------------
+
+Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
+
+Splitting the data in train and test data
+
+```{r}
+nrow(temp_dm)
+
+# Splitting data in train and test data
+split_dm <- sample.split(temp_dm$daily_mean_temperature, SplitRatio = 0.7)
+length(split_dm)
+
+train_dm <- subset(temp_dm, split_dm == "TRUE")
+test_dm <- subset(temp_dm, split_dm == "FALSE")
+```
+
+Fit the Random Forest Model
+
+```{r}
+#make this example reproducible
+set.seed(10)
+
+#fit the random forest model
+rf_model_dm <- randomForest(
+  formula = daily_mean_temperature ~ elevation + tree_canopy_height + building_height,
+  data = train_dm,
+  mtry = 3,
+  importance = TRUE,
+  na.action = na.omit
+)
+
+rf_model_dm
+importance(rf_model_dm)
+
+#find number of trees that produce lowest test MSE
+which.min(rf_model_dm$mse)
+
+#find RMSE of best model
+sqrt(rf_model_dm$mse[which.min(rf_model_dm$mse)]) 
+
+#plot the test MSE by number of trees
+plot(rf_model_dm)
+
+#Importance plot
+importance(rf_model_dm)
+
+#produce variable importance plot
+varImpPlot(rf_model_dm) 
+```
+
+Tune the model
+This function produces the following plot, which displays the number of predictors used at each split when building the trees on the x-axis and the out-of-bag estimated error on the y-axis:
+
+```{r}
+model_tuned_dm <- tuneRF(
+  x = data.frame(
+    elevation = train_dm$elevation,
+    building_height = train_dm$building_height,
+    tree_canopy_height = train_dm$tree_canopy_height
+  ),
+  y = train_dm$daily_mean_temperature,  # define response variable
+  ntreeTry = 500,
+  mtryStart = 3,
+  stepFactor = 1.5,
+  improve = 0.01,
+  trace = FALSE  # don't show real-time progress
+)
+```
+
+We can see that the lowest OOB error is achieved by using 3 randomly chosen predictors at each split when building the trees.
+
+Use the Final Model to Make Predictions and derive Residuals
+
+```{r}
+# Predict on training data
+predicted_dm_rf <- predict(rf_model_dm, newdata=test_dm)
+
+# Calculate residuals: observed - predicted
+residuals_dm_rf <- temp_dm$daily_mean_temperature - predicted_dm_rf
+
+plot(residuals_dm_rf)
+```
+
+--------------------------------------------------------------------------------
+
+
+
+
 
 Histogram to check data distribution
 
