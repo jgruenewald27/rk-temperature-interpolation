@@ -339,92 +339,6 @@ print(paste("GAM RMSE:", round(rmse_gam_mm, 4)))
 
 --------------------------------------------------------------------------------
 
-Still some confusion here
-
-Create prediction locations for the kriging process including the covariates
-
-```{r}
-# Convert raster to points, including values, and remove NAs
-predLocations <- terra::as.points(dem, values=TRUE, na.rm=TRUE)
-
-# Reproject the elevation data to match correct CRS
-predLocations <- terra::project(predLocations, y = crs(temp_mm))
-
-# Check CRS of locations
-crs(predLocations)
-
-# Convert the points to a SpatialPointsDataFrame
-predLocations <- as(predLocations, "Spatial")
-
-# Convert sf object to sp object
-temp_mm_sp <- as(temp_mm, "Spatial")
-
-# Set CRS of predLocations_sp to match july_mean_temp
-sp::proj4string(predLocations) == sp::proj4string(temp_mm_sp)
-
-# Display the updated gridded points
-class(predLocations)
-```
-
-```{r}
-# 4. Fit variogram to residuals
-fitted <- autofitVariogram(gam_residuals ~ 1, input_data = temp_mm)
-fitted_vgm <- fitted$var_model
-plot(fitted$exp_var, fitted$var_model)
-```
-
-```{r}
-# 6. Interpolate residuals by kriging
-kriged_resid <- krige(gam_residuals ~ 1,
-                      loc = temp_mm_sp,
-                      newdata = predLocations,
-                      model = fitted_vgm)
-```
-
-```{r}
-cv_results <- krige.cv(gam_residuals ~ 1, 
-                       locations = temp_mm_sp, 
-                       model = fitted_vgm)
-
-# Check error metrics
-summary(cv_results$var1.pred - cv_results$observed)  # Mean error
-sqrt(mean((cv_results$var1.pred - cv_results$observed)^2))  # RMSE
-
-```
-
-```{r}
-# Step 1: Predict GAM component at kriging locations
-gam_pred <- predict(gam_all, newdata = predLocations)
-
-# Step 2: Get kriged residuals
-kriged_resid_values <- kriged_resid$var1.pred
-
-# Step 3: Combine both
-final_pred <- gam_pred + kriged_resid_values
-```
-
-
-
-```{r}
-predResidHDRas <- raster::brick(kriged_resid)
-```
-
-```{r}
-#tmap_mode("plot")
-tm_shape(subset(predTempHDRas, subset = "var1.pred")) + 
-  tm_raster(col="var1.pred", title = "Prediction [°C]", n=9, 
-            legend.reverse = TRUE, palette = "-RdBu") +
-  tm_shape(july_mean_temp) + 
-  tm_symbols(col="mean_temperature", title.col = "Observed [°C]", 
-             legend.col.reverse = TRUE, palette = "-BrBG", 
-             border.col = "black", size=.1, alpha=.9) +
-  tm_scale_bar() + 
-  tm_layout(title = "Temperature interpolation, HD", 
-            legend.outside = TRUE, attr.outside = TRUE)
-```
-
---------------------------------------------------------------------------------
-
 Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
 
 Approach based on: https://www.statology.org/random-forest-in-r/ and https://www.geeksforgeeks.org/random-forest-approach-in-r-programming/
@@ -598,57 +512,111 @@ print(paste("XGBoost RMSE:", round(rmse_xg_mm, 4)))
 
 --------------------------------------------------------------------------------
 
-Linear regression models may be too simplistic and fail to accurately capture the correlation between temperature measurements and selected covariates. They were tested here to see if they might still produce meaningful results.
+Still some confusion here
 
-Multiple Linear Rregression (MLR)
-
-```{r}
-model <- lm(mean_temperature ~ elevation + tree_canopy_height + building_height, data = july_mean_temp)
-
-# Print model summary
-summary(model)
-
-plot(model)  # Look for non-random patterns in residuals
-```
-
-Stepwise MLR
+Create prediction locations for the kriging process including the covariates
 
 ```{r}
-# stepwise variable selection
-model.MLR.step <- step(model, direction="both")
+# Convert raster to points, including values, and remove NAs
+predLocations <- terra::as.points(dem, values=TRUE, na.rm=TRUE)
 
-# summary of the new model using stepwise covariates selection
-summary(model.MLR.step)
+# Reproject the elevation data to match correct CRS
+predLocations <- terra::project(predLocations, y = crs(temp_mm))
+
+# Check CRS of locations
+crs(predLocations)
+
+# Convert the points to a SpatialPointsDataFrame
+predLocations <- as(predLocations, "Spatial")
+
+# Convert sf object to sp object
+temp_mm_sp <- as(temp_mm, "Spatial")
+
+# Set CRS of predLocations_sp to match july_mean_temp
+sp::proj4string(predLocations) == sp::proj4string(temp_mm_sp)
+
+# Display the updated gridded points
+str(predLocations)
+
+predLocations_sf <- st_as_sf(predLocations)
 ```
-
-Interpretation of MLR performance
 
 ```{r}
-# graphical diagnosis of the regression analysis
-par(mfrow=c(2,2))
-plot(model.MLR.step)
-par(mfrow=c(1,1))
+# 4. Fit variogram to residuals
+fitted <- autofitVariogram(gam_residuals ~ 1, input_data = temp_mm)
+fitted_vgm <- fitted$var_model
+plot(fitted$exp_var, fitted$var_model)
 ```
-
-GLS model
 
 ```{r}
-# Extract coordinates (assuming `geom` is the column with spatial data)
-july_mean_temp$coords <- st_coordinates(july_mean_temp$geom)
-
-# Separate the coordinates into `x` and `y` columns
-july_mean_temp$x <- july_mean_temp$coords[, 1]
-july_mean_temp$y <- july_mean_temp$coords[, 2]
-
-gls_model <- gls(mean_temperature ~ elevation + tree_canopy_height + building_height,
-                 data = july_mean_temp,
-                 correlation = corExp(form = ~ x + y, nugget = TRUE))
-
-summary(gls_model)
+# 6. Interpolate residuals by kriging
+kriged_resid <- krige(gam_residuals ~ 1,
+                      loc = temp_mm,
+                      newdata = predLocations_sf,
+                      model = fitted_vgm)
 ```
 
---------------------------------------------------------------------------------
+```{r}
+str(kriged_resid)
 
+# Convert to sf object
+kriged_stars <- st_as_stars(kriged_resid)
+
+# Plot kriged predicted residuals
+tm_shape(kriged_stars) +
+  tm_dots("var1.pred", 
+          palette = "-RdBu",  # reversed palette to show negative vs positive residuals clearly
+          title = "Kriged Residuals",
+          size = 0.5) +
+  tm_layout(main.title = "Kriged Residual Surface")
+
+```
+
+
+
+```{r}
+cv_results <- krige.cv(gam_residuals ~ 1, 
+                       locations = temp_mm_sp, 
+                       model = fitted_vgm)
+
+# Check error metrics
+summary(cv_results$var1.pred - cv_results$observed)  # Mean error
+sqrt(mean((cv_results$var1.pred - cv_results$observed)^2))  # RMSE
+
+```
+
+```{r}
+# Step 1: Predict GAM component at kriging locations
+gam_pred <- predict(gam_all, newdata = predLocations)
+
+# Step 2: Get kriged residuals
+kriged_resid_values <- kriged_resid$var1.pred
+
+# Step 3: Combine both
+final_pred <- gam_pred + kriged_resid_values
+```
+
+
+
+```{r}
+predResidHDRas <- raster::brick(kriged_resid)
+```
+
+```{r}
+#tmap_mode("plot")
+tm_shape(subset(predTempHDRas, subset = "var1.pred")) + 
+  tm_raster(col="var1.pred", title = "Prediction [°C]", n=9, 
+            legend.reverse = TRUE, palette = "-RdBu") +
+  tm_shape(july_mean_temp) + 
+  tm_symbols(col="mean_temperature", title.col = "Observed [°C]", 
+             legend.col.reverse = TRUE, palette = "-BrBG", 
+             border.col = "black", size=.1, alpha=.9) +
+  tm_scale_bar() + 
+  tm_layout(title = "Temperature interpolation, HD", 
+            legend.outside = TRUE, attr.outside = TRUE)
+```
+
+----------------------------------------------
 
 ```{r}
 # 4. Fit variogram to residuals
@@ -721,3 +689,55 @@ cat("Kriging Cross-Validation:\n")
 summary(kr_cv$residual)
 ```
 
+--------------------------------------------------------------------------------
+
+Linear regression models may be too simplistic and fail to accurately capture the correlation between temperature measurements and selected covariates. They were tested here to see if they might still produce meaningful results.
+
+Multiple Linear Rregression (MLR)
+
+```{r}
+model <- lm(mean_temperature ~ elevation + tree_canopy_height + building_height, data = july_mean_temp)
+
+# Print model summary
+summary(model)
+
+plot(model)  # Look for non-random patterns in residuals
+```
+
+Stepwise MLR
+
+```{r}
+# stepwise variable selection
+model.MLR.step <- step(model, direction="both")
+
+# summary of the new model using stepwise covariates selection
+summary(model.MLR.step)
+```
+
+Interpretation of MLR performance
+
+```{r}
+# graphical diagnosis of the regression analysis
+par(mfrow=c(2,2))
+plot(model.MLR.step)
+par(mfrow=c(1,1))
+```
+
+GLS model
+
+```{r}
+# Extract coordinates (assuming `geom` is the column with spatial data)
+july_mean_temp$coords <- st_coordinates(july_mean_temp$geom)
+
+# Separate the coordinates into `x` and `y` columns
+july_mean_temp$x <- july_mean_temp$coords[, 1]
+july_mean_temp$y <- july_mean_temp$coords[, 2]
+
+gls_model <- gls(mean_temperature ~ elevation + tree_canopy_height + building_height,
+                 data = july_mean_temp,
+                 correlation = corExp(form = ~ x + y, nugget = TRUE))
+
+summary(gls_model)
+```
+
+--------------------------------------------------------------------------------
