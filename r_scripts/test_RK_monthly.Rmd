@@ -24,6 +24,8 @@ library(randomForest)
 library(nlme)
 library(automap)
 library(mgcv)
+library(xgboost)
+library(caret)
 
 # Data Manipulation & Wrangling
 library(tidyverse)
@@ -213,10 +215,28 @@ It is also an influencing factor, that I only work with n=31 data points
 GAM Model
 Generalized Additive Models for each of the covariates
 
+Approach based on: https://www.geeksforgeeks.org/generalized-additive-models-using-r/
+
+Prep the data
+
 ```{r}
-gam_elev <- gam(monthly_mean_temperature ~ s(elevation), data = temp_mm)
+nrow(temp_mm)
+
+# Splitting data in train and test data
+split_gam_mm <- sample.split(temp_mm$monthly_mean_temperature, SplitRatio = 0.6)
+length(split_gam_mm)
+
+train_gam_mm <- subset(temp_mm, split_gam_mm == "TRUE")
+test_gam_mm <- subset(temp_mm, split_gam_mm == "FALSE")
+```
+
+Models for each individual environmental covariates
+
+```{r}
+gam_elev <- gam(monthly_mean_temperature ~ s(elevation), data = train_gam_mm)
 summary(gam_elev)
 ```
+
 ```{r}
 gam_tch <- gam(monthly_mean_temperature ~ s(tree_canopy_height), data = temp_mm)
 summary(gam_tch)
@@ -230,12 +250,12 @@ summary(gam_bh)
 GAM for all three covariates
 
 ```{r}
-gam_all <- gam(monthly_mean_temperature ~ 
+gam_all_mm <- gam(monthly_mean_temperature ~ 
                   s(elevation) + 
                   s(tree_canopy_height) + 
                   s(building_height), 
                 data = temp_mm)
-summary(gam_all)
+summary(gam_all_mm)
 ```
 
 Example: Visualize the results
@@ -293,10 +313,30 @@ ggplot() +
 Get the residuals from the fitted GAM model with the three environmental covariates
 
 ```{r}
-gam_all$residuals
+gam_all_mm$residuals
 
-temp_mm$gam_residuals <- gam_all$residuals
+temp_mm$gam_residuals <- gam_all_mm$residuals
 ```
+
+Make predictions
+
+```{r}
+#make predictions
+pred_gam_mm = predict(gam_all_mm, test_gam_mm)
+
+# Mean Squared Error
+mse_gam_mm = mean((test_gam_mm$monthly_mean_temperature - pred_gam_mm)^2)
+print(paste("GAM MSE:", round(mse_gam_mm, 4)))
+
+# Mean Absolute Error
+mae_gam_mm = caret::MAE(test_gam_mm$monthly_mean_temperature, pred_gam_mm)
+print(paste("GAM MAE:", round(mae_gam_mm, 4)))
+
+# Root Mean Squared Error
+rmse_gam_mm = caret::RMSE(test_gam_mm$monthly_mean_temperature, pred_gam_mm)
+print(paste("GAM RMSE:", round(rmse_gam_mm, 4)))
+```
+
 --------------------------------------------------------------------------------
 
 Still some confusion here
@@ -387,29 +427,31 @@ tm_shape(subset(predTempHDRas, subset = "var1.pred")) +
 
 Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
 
+Approach based on: https://www.statology.org/random-forest-in-r/ and https://www.geeksforgeeks.org/random-forest-approach-in-r-programming/
+
 Splitting the data in train and test data
 
 ```{r}
 nrow(temp_mm)
 
 # Splitting data in train and test data
-split_mm <- sample.split(temp_mm$monthly_mean_temperature, SplitRatio = 0.7)
-length(split_mm)
+split_rf_mm <- sample.split(temp_mm$monthly_mean_temperature, SplitRatio = 0.6)
+length(split_rf_mm)
 
-train_mm <- subset(temp_mm, split_mm == "TRUE")
-test_mm <- subset(temp_mm, split_mm == "FALSE")
+train_rf_mm <- subset(temp_mm, split_rf_mm == "TRUE")
+test_rf_mm <- subset(temp_mm, split_rf_mm == "FALSE")
 ```
 
 Fit the Random Forest Model
 
 ```{r}
 #make this example reproducible
-set.seed(10)
+set.seed(0)
 
 #fit the random forest model
 rf_model_mm <- randomForest(
   formula = monthly_mean_temperature ~ elevation + tree_canopy_height + building_height,
-  data = train_mm,
+  data = train_rf_mm,
   mtry = 3,
   importance = TRUE,
   na.action = na.omit
@@ -427,9 +469,6 @@ sqrt(rf_model_mm$mse[which.min(rf_model_mm$mse)])
 #plot the test MSE by number of trees
 plot(rf_model_mm)
 
-#Importance plot
-importance(rf_model_mm)
-
 #produce variable importance plot
 varImpPlot(rf_model_mm) 
 ```
@@ -440,11 +479,11 @@ This function produces the following plot, which displays the number of predicto
 ```{r}
 model_tuned_mm <- tuneRF(
   x = data.frame(
-    elevation = train_mm$elevation,
-    building_height = train_mm$building_height,
-    tree_canopy_height = train_mm$tree_canopy_height
+    elevation = train_rf_mm$elevation,
+    building_height = train_rf_mm$building_height,
+    tree_canopy_height = train_rf_mm$tree_canopy_height
   ),
-  y = train_mm$monthly_mean_temperature,  # define response variable
+  y = train_rf_mm$monthly_mean_temperature,  # define response variable
   ntreeTry = 500,
   mtryStart = 3,
   stepFactor = 1.5,
@@ -453,18 +492,108 @@ model_tuned_mm <- tuneRF(
 )
 ```
 
-We can see that the lowest OOB error is achieved by using 3 randomly chosen predictors at each split when building the trees.
+We can see that the lowest OOB error is achieved by using 2 randomly chosen predictors at each split when building the trees.
 
 Use the Final Model to Make Predictions and derive Residuals
 
 ```{r}
 # Predict on training data
-predicted_mm_rf <- predict(rf_model_mm, newdata=test_mm)
+predicted_rf_mm <- predict(rf_model_mm, newdata=test_rf_mm)
 
 # Calculate residuals: observed - predicted
-residuals_mm_rf <- temp_mm$monthly_mean_temperature - predicted_mm_rf
+residuals_rf_mm <- temp_mm$monthly_mean_temperature - predicted_rf_mm
 
-plot(residuals_mm_rf)
+plot(residuals_rf_mm)
+```
+
+Calculate model performance
+
+```{r}
+# Calculate RMSE
+rmse_rf_mm = caret::RMSE(test_rf_mm$monthly_mean_temperature, predicted_rf_mm)
+
+#rmse_rf_mm <- sqrt(mean((actual_mm_rf - predicted_mm_rf)^2))
+print(paste("Random Forest RMSE:", round(rmse_rf_mm, 4)))
+```
+
+--------------------------------------------------------------------------------
+
+Testing XGBoost approach
+short for extreme gradient boosting
+
+Approach based on: https://www.statology.org/xgboost-in-r/
+
+Prep the data
+
+```{r}
+#make this example reproducible
+set.seed(0)
+
+#split into training (80%) and testing set (20%)
+parts_xg_mm = createDataPartition(temp_mm$monthly_mean_temperature, p = .7, list = F)
+train_xg_mm = temp_mm[parts_xg_mm, ]
+test_xg_mm = temp_mm[-parts_xg_mm, ]
+
+#define predictor and response variables in training set
+train_x_xg_mm = data.matrix(st_drop_geometry(train_xg_mm[, 4:6]))
+train_y_xg_mm = train_xg_mm[[2]]
+
+#define predictor and response variables in testing set
+test_x_xg_mm = data.matrix(st_drop_geometry(test_xg_mm[, 4:6]))
+test_y_xg_mm = test_xg_mm[[2]]
+
+#define final training and testing sets
+xgb_train_xg_mm = xgb.DMatrix(data = train_x_xg_mm, label = train_y_xg_mm)
+xgb_test_xg_mm = xgb.DMatrix(data = test_x_xg_mm, label = test_y_xg_mm)
+```
+
+Fit the Model
+
+```{r}
+#define watchlist
+watchlist_xg_mm = list(train=xgb_train_xg_mm, test=xgb_test_xg_mm)
+
+#fit XGBoost model and display training and testing data at each round
+model_xg_mm = xgb.train(
+  data = xgb_train_xg_mm, 
+  max.depth = 3, 
+  watchlist=watchlist_xg_mm, 
+  nrounds = 70,
+  early_stopping_rounds = 10)
+```
+
+Check for best iteration and adapt in final model!
+
+Define final model
+
+```{r}
+#define final model
+final_xg_mm = xgboost(
+  data = xgb_train_xg_mm, 
+  max.depth = 3, 
+  nrounds = 28, 
+  verbose = 0)
+```
+
+Note: The argument verbose = 0 tells R not to display the training and testing error for each round.
+
+Make Predictions and calculate accuracy measures:
+
+```{r}
+#make predictions
+pred_y_xg_mm = predict(final_xg_mm, xgb_test_xg_mm)
+
+# Mean Squared Error
+mse_xg_mm = mean((test_y_xg_mm - pred_y_xg_mm)^2)
+print(paste("XGBoost MSE:", round(mse_xg_mm, 4)))
+
+# Mean Absolute Error
+mae_xg_mm = caret::MAE(test_y_xg_mm, pred_y_xg_mm)
+print(paste("XGBoost MAE:", round(mae_xg_mm, 4)))
+
+# Root Mean Squared Error
+rmse_xg_mm = caret::RMSE(test_y_xg_mm, pred_y_xg_mm)
+print(paste("XGBoost RMSE:", round(rmse_xg_mm, 4)))
 ```
 
 --------------------------------------------------------------------------------
