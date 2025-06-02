@@ -1,0 +1,112 @@
+---
+title: "Explorative analysis of the temperature data"
+author: "Johannes Gruenewald"
+date: "2024-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(sf)
+library(geojsonsf)
+library(terra)
+library(sp)
+library(gstat)
+library(tidyverse)
+library(ggplot2)
+```
+
+--------------------------------------------------------------------------------
+
+Load the temperature measurements as input data
+
+```{r}
+# Read temperature points
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20240107_31days.gpkg')
+
+# Removes only rows where `temperature` is NA
+temp <- temp[!is.na(temp$temperature), ] 
+
+# Ensure dateobserved is in the correct date-time format
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
+```
+
+Preprocessing of the temperature data
+Calculate mean temperature for each measurement station for the month of July
+
+```{r}
+str(temp)
+```
+
+Reproject the temperature data
+
+```{r}
+temp <- st_transform(temp, crs="EPSG:32632")
+```
+
+
+```{r}
+ggplot(temp, aes(x = dateobserved, y = temperature)) +
+  geom_line(alpha = 0.3) +
+  labs(title = "Temperature Over Time", x = "Time", y = "Temperature (°C)")
+
+```
+
+Calculate mean temperature for each measurement station for the month of July
+
+```{r}
+# Calculate the mean temperature for each station in July
+temp_mm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%
+  group_by(stationname) %>%
+  summarise(monthly_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")
+```
+
+```{r}
+ggplot(temp_mm, aes(x = reorder(stationname, monthly_mean_temperature), 
+                    y = monthly_mean_temperature)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +  # Flips axes for better readability
+  labs(
+    title = "Mean Temperature in July by Station",
+    x = "Station",
+    y = "Mean Temperature (°C)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+library(sf)
+library(dplyr)
+
+# List all .gpkg files
+gpkg_files <- list.files("../data/temp_HD/", pattern = "\\.gpkg$", full.names = TRUE)
+
+# Read all files and bind them into one sf object
+all_data <- gpkg_files %>%
+  lapply(read_sf) %>%
+  bind_rows()
+
+# Write to a single layer in a new GeoPackage
+st_write(all_data, "../data/combined_temp_data.gpkg", layer = "all_temp_data", driver = "GPKG")
+
+
+temp_2023 <- sf::read_sf('../data/sensor_data_year_2023.gpkg')
+
+```
+
+```{r}
+# Make sure dateobserved is in POSIXct or Date format
+temp_2023$dateobserved <- as.POSIXct(temp_2023$dateobserved)
+
+# Calculate monthly mean temperature
+temp_mm_2023 <- temp_2023 %>%
+  mutate(month = floor_date(dateobserved, unit = "month")) %>%
+  group_by(month) %>%
+  summarise(monthly_mean_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
+```
+
