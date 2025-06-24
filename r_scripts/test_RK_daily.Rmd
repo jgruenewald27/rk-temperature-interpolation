@@ -38,6 +38,9 @@ library(gridExtra)
 # Mapping & Interactive Visualization
 library(mapview)
 library(tmap)
+
+# Additional
+library(lattice)
 ```
 
 --------------------------------------------------------------------------------
@@ -46,15 +49,26 @@ Load the temperature measurements as input data
 
 ```{r}
 # Read temperature points
-temp <- sf::read_sf('../data/temp_HD/sensor_data_20240107_31days.gpkg')
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
 
 # Removes only rows where `temperature` is NA
 temp <- temp[!is.na(temp$temperature), ] 
 
-# Ensure dateobserved is in the correct date-time format
+# Ensure dateobserved is in the correct date-time format with German timezone
 temp <- temp %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
+
+# Calculate hour count since epoch, rounded down to current hour
+temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+
+# Test the results
+print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
+
+# Reproject the temperature data
+temp_hm <- st_transform(temp_hm, crs="EPSG:32632")
 ```
+
+--------------------------------------------------------------------------------
 
 Preprocessing of the temperature data
 Calculate mean temperature for each measurement station for each day for the month of July
@@ -68,10 +82,34 @@ temp_dm <- temp %>%
   summarise(daily_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")
 ```
 
-Reproject the temperature data
+Calculate hourly means for each unique stations for the month of July
 
 ```{r}
-temp_dm <- st_transform(temp_dm, crs="EPSG:32632")
+temp_hm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
+  group_by(stationname, chour) %>%                # Group by station and hour
+  summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+  mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+```
+
+--------------------------------------------------------------------------------
+
+Extract coordinates of the measurement stations 
+-> maybe use them as covariates
+
+```{r}
+# Extract coordinates and data into a data frame
+coords <- st_coordinates(temp)
+locs <- cbind(temp, coords)
+locs <- as.data.frame(locs)
+
+# 4. Keep only one row per station and select relevant columns
+station_coords <- locs %>%
+  distinct(stationname, .keep_all = TRUE) %>%
+  select(stationname, X, Y)
+
+# 5. Inspect the structure
+str(station_coords)
 ```
 
 --------------------------------------------------------------------------------
@@ -85,7 +123,7 @@ Load Elevation
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-dem <- terra::project(dem, y = crs(temp_dm))
+dem <- terra::project(dem, y = crs(temp_hm))
 ```
 
 Load Tree Canopy Height
@@ -99,7 +137,7 @@ tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
 tch[tch == 101] <- NA
 
 # Reproject the elevation data to match correct CRS
-tch <- terra::project(tch, y = crs(temp_dm))
+tch <- terra::project(tch, y = crs(temp_hm))
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
@@ -112,17 +150,86 @@ Load Building Height
 ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
 
 # Reproject the elevation data to match correct CRS
-ghs_bh <- terra::project(ghs_bh, y = crs(temp_dm))
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_hm))
 
 # Check if CRS is correct
 crs(ghs_bh) == crs(dem)
+```
+
+Create a Raster Stack for all the covariate information
+
+```{r}
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elev", "canopy", "bldg")
+
+env_stack
+```
+
+The GHS_BH data has a much coarser resolution (about 95 m) compared to DEM (23 m). It represents building heights, which are:
+- Discrete or categorical-like (often containing sharp edges)
+- Possibly less spatially smooth
+For such data, bilinear interpolation can introduce unrealistic intermediate values (e.g., building heights that don't exist in reality) because it averages neighboring cells.
+
+!Use Nearest neighborto preserve building height values without smoothing!
+
+```{r}
+plot(env_stack$bldg)
+```
+
+Also add lat and lon to the raster stack
+
+```{r}
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+```
+
+Stack the three raster layers
+
+```{r}
+grids <- c(env_stack, lon_raster, lat_raster)
+
+grids
 ```
 
 --------------------------------------------------------------------------------
 
 Adding covariates to temperature data
 
-- Extract values from all the raster and add to temperature data at point locations
+```{r}
+# Extract raster values at the point locations
+extracted_vals <- terra::extract(grids, temp_hm)
+
+# Remove the first column (ID)
+extracted_vals <- extracted_vals[,-1]
+
+# Combine the point data with the extracted raster values
+temp_hm.ex <- cbind(as.data.frame(temp_hm), extracted_vals)
+
+temp_hm.ex
+```
+
+Old version: Extract values from all the raster and add to temperature data at point locations
 
 ```{r}
 # Extract raster values at the temp locations
@@ -149,6 +256,109 @@ temp_dm <- temp_dm %>%
 # Check the updated sf object
 print(temp_dm)
 ```
+
+--------------------------------------------------------------------------------
+
+Descriptive statistics and plots to analyse the temperature data
+
+Example with a visualization of three measurement stations
+
+```{r}
+# Visualize three meteorological stations
+Königstuhl_10 <- subset(temp_hm.ex, stationname=="69117_Königstuhl_10", select=c("mh_temp", "chour"))
+Bergheimer_Str._1	<- subset(temp_hm.ex, stationname=="69115_Bergheimer_Str._1", select=c("mh_temp", "chour"))
+In_den_Weinäckern <- subset(temp_hm.ex, stationname=="69251_In_den_Weinäckern", select=c("mh_temp", "chour"))
+
+par(mfrow=c(1,3))
+
+scatter.smooth(Königstuhl_10$chour, Königstuhl_10$mh_temp, xlab="Cumulative hours",
+               ylab="Mean hourly temperature", ylim=c(-12,28), col="grey")
+scatter.smooth(Bergheimer_Str._1$chour, Bergheimer_Str._1$mh_temp, xlab="Cumulative hours",
+               ylab="Mean hourly temperature", ylim=c(-12,28), col="grey")
+scatter.smooth(In_den_Weinäckern$chour, In_den_Weinäckern$mh_temp, xlab="Cumulative hours",
+               ylab="Mean hourly temperature", ylim=c(-12,28), col="grey")
+```
+
+Plot for all measurement stations
+
+```{r}
+# Get all unique station names
+stations <- unique(temp_hm.ex$stationname)
+
+# Set up the plot layout: Adjust rows/cols depending on how many you want per page
+n <- length(stations)
+par(mfrow = c(3, 3))  # Show only 9 plots per page
+
+# Loop over each station and plot
+for (s in stations) {
+  station_data <- subset(temp_hm.ex, stationname == s, select = c("mh_temp", "chour"))
+  
+  # Plot with scatter.smooth
+  scatter.smooth(
+    station_data$chour,
+    station_data$mh_temp,
+    main = s,
+    xlab = "Cumulative hours",
+    ylab = "Mean hourly temperature",
+    ylim = c(-12, 28),
+    col = "grey"
+  )
+}
+```
+
+Descriptive statistics for each station
+
+```{r}
+# Compute descriptive statistics for each station
+station_stats <- temp_hm.ex %>%
+  group_by(stationname) %>%
+  summarise(
+    n_obs        = n(),
+    temp_mean    = mean(mh_temp, na.rm = TRUE),
+    temp_sd      = sd(mh_temp, na.rm = TRUE),
+    temp_min     = min(mh_temp, na.rm = TRUE),
+    temp_max     = max(mh_temp, na.rm = TRUE),
+    chour_min    = min(chour, na.rm = TRUE),
+    chour_max    = max(chour, na.rm = TRUE)
+  )
+
+# View first few rows
+print(station_stats)
+```
+
+Stations that didn't measure the entire time or had missing measurements:
+
+Likely missing values:
+- 69115_Czernyring_22/11-12	726
+- 69117_Königstuhl_10	724
+- 69117_Rodelweg	708
+- 69118_Am_Büchsenackerhang_39	714
+- 69118_B37	711
+- 69118_Wendestelle_Hbw	711
+- 69123_Gewannn_Die_Äußeren_Rauschen	724
+- 69123_Grenzhöfer_Weg	711	
+- 69251_In_den_Weinäckern	703
+
+Started later:
+- 69115_Poststraße_15	448	
+- 69123_Richard-Drach-Straße_7	87
+
+--------------------------------------------------------------------------------
+
+Fit Linear Regression model as a test
+
+CONTINUE UNDERSTANDING THIS PART AND FURTHER INVESTIGATE HOW HOUR OF THE DAY INFO CAN BE INCLUDED AS A COVARIATE
+IF NOTHING WORK -> CONTINUE WITH HENGL 2009 AND FURTHER APPLY HIS PROCESS AND TRY TO UNDERSTAND THE CONNECTION BETWEEN 
+THE REGRESSION PART AND THE KRIGING OF THE RESIDUALS
+
+```{r}
+lm.temp_hm <- lm(mh_temp ~ elev + canopy + bldg + lon + lat + chour,
+                data = temp_hm.ex)
+
+summary(lm.temp_hm)
+```
+
+
 
 --------------------------------------------------------------------------------
 
@@ -296,6 +506,10 @@ model.MLR.step <- step(model, direction="both")
 
 # summary of the new model using stepwise covariates selection
 summary(model.MLR.step)
+
+install.packages("gtsummary")
+
+model.MLR.step |> tbl_regression()
 ```
 
 Interpretation of MLR performance
