@@ -448,9 +448,39 @@ spplot(grids_sp, "rk_pred", main = "Regression Kriging Prediction (°C)",
        sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
 ```
 
+Performance of final RK results
 
 ```{r}
-class(grids_sp)
-str(grids_sp)
+# Extract predicted values from the RK surface at station coordinates
+rk_at_stations <- sp::over(station_coords, grids_sp)
+
+# Add observed values to the extracted predictions
+rk_eval <- cbind(rk_at_stations, obs = temp_shm.sf$mh_temp)
+
+# Calculate prediction error
+rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
+
+# Metrics
+rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
+mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
+bias <- mean(rk_eval$residual, na.rm = TRUE)
+
+cat("RK RMSE :", round(rmse, 2), "\n")
+cat("RK MAE  :", round(mae, 2), "\n")
+cat("RK Bias :", round(bias, 2), "\n")
+
+ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "RK Prediction Residuals at Stations",
+       x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)")
 ```
+
+Comments:
+- The residuals are centered around 0 across most of the prediction range, confirming low bias overall.
+- No extreme outliers that would suggest a completely failed prediction at any station.
+
+- At lower predicted temperatures (< 16.5°C), residuals are mostly positive, meaning the model underestimates temperatures -> cold areas are consistently predicted too cold.
+- At higher predicted values (> 17.5°C), the model tends to slightly overestimate (negative residuals).
+- The spread of residuals seems to change across the predicted range. This could hint that the model errors are not uniform, especially for low-temperature areas.
 
