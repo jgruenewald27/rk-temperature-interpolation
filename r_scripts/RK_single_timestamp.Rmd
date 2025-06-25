@@ -41,7 +41,6 @@ library(tmap)
 
 # Additional
 library(lattice)
-library(blockCV)
 ```
 
 --------------------------------------------------------------------------------
@@ -361,6 +360,8 @@ Notes to CV plot:
 --------------------------------------------------------------------------------
 
 Spatial Cross-Validation
+
+THIS APPROACH DIDNT WORK SO FAR
 
 ```{r}
 # Step 1: Generate spatial cross-validation folds
