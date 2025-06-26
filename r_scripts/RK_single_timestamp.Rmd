@@ -3,6 +3,9 @@ title: "RK_single_timestamp"
 author: "Johannes Gruenewald"
 date: "2025-06-25"
 output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
@@ -10,6 +13,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+# Load Required Libraries
+
 # Spatial Data Handling & Processing
 library(sf)
 library(sp)
@@ -27,8 +32,6 @@ library(mgcv)
 
 # Data Manipulation & Wrangling
 library(tidyverse)
-library(dplyr)
-library(magrittr)
 
 # Data Visualization
 library(ggplot2)
@@ -36,14 +39,13 @@ library(scales)
 library(gridExtra)
 
 # Mapping & Interactive Visualization
-#library(mapview)
 library(tmap)
 
 # Additional
 library(lattice)
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 ```{r}
 # Load and preprocess temp data
@@ -68,7 +70,7 @@ temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
 print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 ```{r}
 # Calculate hourly means for each unique stations for the month of July
@@ -90,10 +92,25 @@ sel_temp_hm <- temp_hm %>%
   slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
   ungroup()
 
-plot(sel_temp_hm$mh_temp)
+# Plot selected data
+plot(sel_temp_hm$mh_temp,
+     pch = 21,                     
+     col = "black",              
+     bg = "grey",               
+     cex = 1.4,               
+     main = paste("Hourly Mean Temperature at 31 Stations\n( Timestamp:", unique(sel_temp_hm$hour),")"),
+     xlab = "Station Index",
+     ylab = "Mean Temperature (°C)",
+     ylim = range(sel_temp_hm$mh_temp) + c(-0.5, 0.5),
+     las = 1,                     
+     bty = "l"                     
+)
+grid()
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+Extract coordinates of the measurement stations
 
 ```{r}
 # Extract coordinates of the measurement stations
@@ -113,7 +130,7 @@ station_coords <- locs %>%
 str(station_coords)
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 Load and process environmental covariates
 
@@ -151,7 +168,7 @@ ghs_bh <- terra::project(ghs_bh, y = crs(temp))
 crs(ghs_bh) == crs(dem)
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 ```{r}
 # Create a Raster Stack for all the covariate information
@@ -195,29 +212,88 @@ names(lat_raster) <- "lat"
 grids <- c(env_stack, lon_raster, lat_raster)
 
 grids
+```
 
-# Step 1: Convert SpatRaster to RasterLayer (raster package)
-grids_ras <- stack(grids)
+------------------------------------------------------------------------
 
-# Step 2: Now convert to SpatialGridDataFrame
-grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+```{r}
+# Add proximity to water as another covariate
 
-grids_sp
+# Convert grid data to point features
+points_vect <- as.points(grids)
+
+# Convert point vector to sf object for spatial analysis
+grid_sf <- st_as_sf(points_vect)
+
+# Load river network
+neckar <- st_read("../data/waterways/waterways_HD.gpkg")
+
+# Reproject to 32632
+neckar <- st_transform(neckar, crs = st_crs(temp))
+
+# Clip Neckar river to extent of the grid (AOI)
+neckar_clipped <- st_intersection(neckar, st_as_sfc(st_bbox(grid_sf)))
+
+# Calculate minimum distance from each grid point to the Neckar river
+grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
+  apply(1, min) %>%
+  as.numeric()
+
+# Cap at 500 meters to limit influence of distant points
+#grid_sf$dwater[grid_sf$dwater > 500] <- NA
+
+# Move 'dist_to_neckar' to first column
+grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
+```
+
+------------------------------------------------------------------------
+
+```{r}
+# Convert to SpatialPointsDataFrame
+grids_sp <- as(grid_sf, "Spatial")
+
+# Now to SpatialPixelsDataFrame
+gridded(grids_sp) <- TRUE
+
+# Convert to SpatialGridDataFrame
+grids_sp <- as(grids_sp, "SpatialGridDataFrame")
+
+str(grids_sp)
 ```
 
 ```{r}
-# Plot and inspect if covariates are properly transferred
-spplot(grids_sp, "bldg", main="Inspect covariates")
+# Plot all the covariates before proceeding with regression and kriging
+
+grid.arrange(
+  spplot(grids_sp["dwater"],  
+         main = "Proximity to Water [m]",  
+         col.regions = terrain.colors(100)),
+  spplot(grids_sp["elev"],    
+         main = "Elevation [m]",           
+         col.regions = viridis::viridis(100)),
+  spplot(grids_sp["canopy"],  
+         main = "Tree Canopy Height [m]",  
+         col.regions = hcl.colors(100, "YlGn")),
+  spplot(grids_sp["bldg"],    
+         main = "Building Height [m]",     
+         col.regions = heat.colors(100)),
+  ncol = 2
+)
 ```
 
-
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 ```{r}
 # Adding covariates to temperature data
 
+# Convert Spatial object to a RasterBrick
+r_brick <- brick(grids_sp)
+
+# Convert the RasterBrick to a terra SpatRaster object
+grid_terra <- rast(r_brick)
+
 # Extract raster values at the point locations
-extracted_vals <- terra::extract(grids, sel_temp_hm)
+extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
 
 # Remove the first column (ID)
 extracted_vals <- extracted_vals[,-1]
@@ -228,22 +304,21 @@ temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
 str(temp_shm.ex)
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 Test RK with linear regression model as a test run
 
-Other potential covariates:
-- daily variation of temperature. How can this be modeled?
-- Sometimes windspeed also has values. As a temporal variable? Or should it be based on constant data to ensure transferbility
-- Proximity to water!!
-
--> CONTINUE WITH HENGL 2009 AND FURTHER APPLY HIS PROCESS AND TRY TO UNDERSTAND THE CONNECTION BETWEEN 
-THE REGRESSION PART AND THE KRIGING OF THE RESIDUALS
+Other potential covariates: - daily variation of temperature. How can
+this be modeled? - Sometimes windspeed also has values. As a temporal
+variable? Or should it be based on constant data to ensure
+transferbility - Proximity to water -\> implemented but unsure what the
+best solution would be for this covariate. Until a certain distance? Or
+what would make sense?
 
 ```{r}
 # Fit a linear model predicting mean hourly temperature
 # using elevation, canopy height, and building height as predictors
-lm.temp_shm <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
+lm.temp_shm <- lm(mh_temp ~ dwater + elev + canopy + bldg, data = temp_shm.ex)
 
 # Show a summary of the fitted model (coefficients, R², p-values, etc.)
 summary(lm.temp_shm)
@@ -258,10 +333,10 @@ str(temp_shm.ex)
 temp_shm.sf <- st_as_sf(temp_shm.ex)
 
 # Confirm the resulting object's class
-class(temp_shm.sf)
+str(temp_shm.sf)
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 Anisotropy
 
@@ -298,15 +373,19 @@ plot(rv.temp, rvgm.temp,
      plot.nu=FALSE, cex=2, pch="+", col="black")
 ```
 
-Could the anisotropy which can be visualy identified in the E-W direction be caused by the Neckar?
-Residuals are more dissimilar in this direction indicating higher semivariance -> more difference between residuals
+Could the anisotropy which can be visualy identified in the E-W
+direction be caused by the Neckar? Residuals are more dissimilar in this
+direction indicating higher semivariance -\> more difference between
+residuals
 
-- Anisotropy is present ->	Spatial correlation varies by direction
-- Stronger continuity in N–S -> Lower semivariance at 0° -> Data is more predictable N–S
-- Weaker continuity in E–W	-> Higher semivariance at 90° ->	Greater variation E–W (anisotropy)
-Model fit	Reasonable in both panels	which is a good basis for kriging
+-   Anisotropy is present -\> Spatial correlation varies by direction
+-   Stronger continuity in N–S -\> Lower semivariance at 0° -\> Data is
+    more predictable N–S
+-   Weaker continuity in E–W -\> Higher semivariance at 90° -\> Greater
+    variation E–W (anisotropy) Model fit Reasonable in both panels which
+    is a good basis for kriging
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 Defining the geostatistical model for residuals
 
@@ -320,9 +399,10 @@ g.resid <- gstat(
 )
 ```
 
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
- Leave-One-Out Cross Validation applied to ordinary kriging residual model
+Leave-One-Out Cross Validation applied to ordinary kriging residual
+model
 
 ```{r}
 # Cross-validation of the kriging model
@@ -347,17 +427,20 @@ ggplot(cv_resid, aes(x = var1.pred, y = residual)) +
   labs(title = "Cross-validation residuals", x = "Predicted", y = "Residual")
 ```
 
-Notes to CV plot:
-- if they are scattered fairly symmetrically around zero -> No strong pattern in residuals
-  - indicates no obvious bias in the predictions across the range.
-  - the residuals do not fan out, so homoscedasticity (constant variance) seems reasonable.
+Notes to CV plot: - if they are scattered fairly symmetrically around
+zero -\> No strong pattern in residuals - indicates no obvious bias in
+the predictions across the range. - the residuals do not fan out, so
+homoscedasticity (constant variance) seems reasonable.
 
-- Slight underestimation bias if more residuals lie above the dotted line above the dotted line for negative predicted values, and below it for positive ones.
-  - This could suggest a mild S-shape, hinting at potential nonlinearity or slight model misspecification (though it's weak here).
+-   Slight underestimation bias if more residuals lie above the dotted
+    line above the dotted line for negative predicted values, and below
+    it for positive ones.
+    -   This could suggest a mild S-shape, hinting at potential
+        nonlinearity or slight model misspecification (though it's weak
+        here).
+-   No extreme outliers, but a few residuals fall close to ±0.5°C.
 
-- No extreme outliers, but a few residuals fall close to ±0.5°C.
-
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 Spatial Cross-Validation
 
@@ -424,8 +507,7 @@ cat("Spatial CV MAE :", round(cv_mae, 2), "\n")
 cat("Spatial CV Bias:", round(cv_me, 2), "\n")
 ```
 
-
---------------------------------------------------------------------------------
+------------------------------------------------------------------------
 
 ```{r}
 # Predict the temperature trend component using the regression model
@@ -477,11 +559,15 @@ ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
        x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)")
 ```
 
-Comments:
-- The residuals are centered around 0 across most of the prediction range, confirming low bias overall.
-- No extreme outliers that would suggest a completely failed prediction at any station.
+Comments: - The residuals are centered around 0 across most of the
+prediction range, confirming low bias overall. - No extreme outliers
+that would suggest a completely failed prediction at any station.
 
-- At lower predicted temperatures (< 16.5°C), residuals are mostly positive, meaning the model underestimates temperatures -> cold areas are consistently predicted too cold.
-- At higher predicted values (> 17.5°C), the model tends to slightly overestimate (negative residuals).
-- The spread of residuals seems to change across the predicted range. This could hint that the model errors are not uniform, especially for low-temperature areas.
-
+-   At lower predicted temperatures (\< 16.5°C), residuals are mostly
+    positive, meaning the model underestimates temperatures -\> cold
+    areas are consistently predicted too cold.
+-   At higher predicted values (\> 17.5°C), the model tends to slightly
+    overestimate (negative residuals).
+-   The spread of residuals seems to change across the predicted range.
+    This could hint that the model errors are not uniform, especially
+    for low-temperature areas.
