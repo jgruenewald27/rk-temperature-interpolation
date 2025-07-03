@@ -212,9 +212,34 @@ names(lat_raster) <- "lat"
 grids <- c(env_stack, lon_raster, lat_raster)
 
 grids
+
+# Conversion when running the analysis without proximity to water
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+```
+
+```{r}
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
 ```
 
 ------------------------------------------------------------------------
+
+Can be included, but destroys the results -> especially the visual appearance
 
 ```{r}
 # Add proximity to water as another covariate
@@ -246,8 +271,6 @@ grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
 grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
 ```
 
-------------------------------------------------------------------------
-
 ```{r}
 # Convert to SpatialPointsDataFrame
 grids_sp <- as(grid_sf, "Spatial")
@@ -261,13 +284,12 @@ grids_sp <- as(grids_sp, "SpatialGridDataFrame")
 str(grids_sp)
 ```
 
+------------------------------------------------------------------------
+
 ```{r}
 # Plot all the covariates before proceeding with regression and kriging
 
 grid.arrange(
-  spplot(grids_sp["dwater"],  
-         main = "Proximity to Water [m]",  
-         col.regions = terrain.colors(100)),
   spplot(grids_sp["elev"],    
          main = "Elevation [m]",           
          col.regions = viridis::viridis(100)),
@@ -279,6 +301,8 @@ grid.arrange(
          col.regions = heat.colors(100)),
   ncol = 2
 )
+
+# If needed spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
 ```
 
 ------------------------------------------------------------------------
