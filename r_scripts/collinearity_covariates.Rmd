@@ -133,6 +133,26 @@ tch <- terra::project(tch, "EPSG:32632")
 crs(tch) == crs(dem)
 ```
 
+Set Gaussian filter
+
+```{r}
+# The logic: Trees have a cooling effect on the surrounding area via shade, evapotranspiration, etc.
+# That effect is strongest closest to the tree and fades with distance.
+# A Gaussian filter models this natural distance decay very well.
+
+#set margins for plots
+par(mfrow = c(2, 1), oma = c(0, 1, 0, 1))
+
+# Gaussian filter with radius 60 m and default sigma (≈ radius/3)
+w <- focalWeight(tch, d = 60, type = "Gauss")
+
+# Apply to tree canopy height to model decaying influence
+tch <- focal(tch, w = w, fun = sum, na.rm = TRUE)
+
+plot(tch, main ="Original Input Raster Tree Canopy Height ") #plot orig
+plot(tch, main="Gaussian Tree Cooling Effect (60 m)") #plot Gaussian filter in 60 m distaince
+```
+
 ```{r}
 # Load the elevation data
 ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
