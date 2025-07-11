@@ -290,6 +290,7 @@ str(grids_sp)
 # Plot all the covariates before proceeding with regression and kriging
 
 grid.arrange(
+  spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
   spplot(grids_sp["elev"],    
          main = "Elevation [m]",           
          col.regions = viridis::viridis(100)),
@@ -302,7 +303,7 @@ grid.arrange(
   ncol = 2
 )
 
-# If needed spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
+# If needed 
 ```
 
 ------------------------------------------------------------------------
@@ -342,7 +343,7 @@ what would make sense?
 ```{r}
 # Fit a linear model predicting mean hourly temperature
 # using elevation, canopy height, and building height as predictors
-lm.temp_shm <- lm(mh_temp ~ dwater + elev + canopy + bldg, data = temp_shm.ex)
+lm.temp_shm <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
 
 # Show a summary of the fitted model (coefficients, R², p-values, etc.)
 summary(lm.temp_shm)

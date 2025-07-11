@@ -85,9 +85,16 @@ temp_hm <- temp %>%
 # Select one specific hourly mean for all the measurement stations
 
 # Select, for each station, the record at its latest hour
+#sel_temp_hm <- temp_hm %>%
+#  group_by(stationname) %>%
+#  slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
+#  ungroup()
+
+# For one specific timestamp
 sel_temp_hm <- temp_hm %>%
+  filter(chour == 468949) %>%
   group_by(stationname) %>%
-  slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
+  slice(1) %>%  # Optional: in case multiple rows match per group
   ungroup()
 
 # Plot selected data
@@ -283,8 +290,6 @@ Elevation and building height are moderately negatively correlated
 
 Canopy and building height have low correlation
 → Their effects on temperature are likely more distinct.
-
-------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
 
