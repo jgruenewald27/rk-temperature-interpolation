@@ -10,51 +10,238 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+# Spatial Data Handling & Processing
 library(sf)
-library(geojsonsf)
-library(terra)
 library(sp)
+library(terra)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
 library(gstat)
+library(caTools)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+library(xgboost)
+library(caret)
+
+# Data Manipulation & Wrangling
 library(tidyverse)
+library(dplyr)
+library(magrittr)
+
+# Data Visualization
 library(ggplot2)
+library(scales)
+library(gridExtra)
+
+# Mapping & Interactive Visualization
+library(mapview)
+library(tmap)
 ```
 
 --------------------------------------------------------------------------------
 
-Load the temperature measurements as input data
+```{r Load and preprocess temp data}
 
-```{r}
-# Read temperature points
-temp <- sf::read_sf('../data/temp_HD/sensor_data_20240107_31days.gpkg')
+# Read temperature data
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
 
-# Removes only rows where `temperature` is NA
+# Removes rows where temp is NA
 temp <- temp[!is.na(temp$temperature), ] 
 
-# Ensure dateobserved is in the correct date-time format
-temp <- temp %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S"))
-```
-
-Preprocessing of the temperature data
-Calculate mean temperature for each measurement station for the month of July
-
-```{r}
-str(temp)
-```
-
-Reproject the temperature data
-
-```{r}
+# Reproject the data for Germany
 temp <- st_transform(temp, crs="EPSG:32632")
+
+# Ensure dateobserved is in the correct date-time format with German timezone
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
+
+# Calculate hour count since epoch, rounded down to current hour
+temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+
+# Test the results
+print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
 ```
 
+```{r Calculate hourly means for each unique stations for the month of July}
+
+# Calculate mean temperature for each station and hour during July
+temp_hm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
+  group_by(stationname, chour) %>%                # Group by station and hour
+  summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+  mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+```
+
+```{r Test plot}
+
+# Check how the plot looks before looping and saving it
+ggplot(temp_hm, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +
+    geom_line() +
+    geom_point(size = 1) +
+    labs(
+      title = paste("Hourly Mean Temperature -", basename(file)),
+      x = "Timestamp", y = "Mean Temperature (°C)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+```
+
+--------------------------------------------------------------------------------
+
+Analyse temperate data for the entire year of 2023
+Each plot will include the temperature information over time 
+
+Loop through all the months
+
+```{r Loop through months to compute hourly mean temperatures and generate time series plots per station.}
+# Define your input folder
+input_folder <- "../data/temp_HD"
+output_folder <- "../temp_timeseries"
+dir.create(output_folder, showWarnings = FALSE)
+
+# List all .gpkg files
+gpkg_files <- list.files(input_folder, pattern = "\\.gpkg$", full.names = TRUE)
+
+# Create an empty list to store results
+all_temp_hm <- list()
+
+# Loop through each .gpkg file
+for (file in gpkg_files) {
+  cat("\nProcessing:", basename(file), "\n")
+
+  # ---- Load and preprocess temp data ----
+  temp <- sf::read_sf(file)
+  temp <- temp[!is.na(temp$temperature), ]
+  temp <- st_transform(temp, crs = "EPSG:32632")
+
+  temp <- temp %>%
+    mutate(dateobserved = as.POSIXct(dateobserved, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
+
+  temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+
+  # ---- Calculate hourly means for July ----
+  temp_hm <- temp %>%
+    group_by(stationname, chour) %>%
+    summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+
+  # Store result in list
+  all_temp_hm[[basename(file)]] <- temp_hm
+
+  # ---- Create and save plot ----
+  plot_name <- sub("\\.gpkg$", ".png", basename(file))
+  plot_path <- file.path(output_folder, plot_name)
+
+  p <- ggplot(temp_hm, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +
+    geom_line() +
+    geom_point(size = 1) +
+    labs(
+      title = paste("Hourly Mean Temperature -", basename(file)),
+      x = "Timestamp", y = "Mean Temperature (°C)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+
+  ggsave(plot_path, plot = p, width = 10, height = 6, dpi = 300)
+}
+```
+
+--------------------------------------------------------------------------------
+
+Calculate monthly mean temperature and standard deviation for the year of 2023
+
+```{r monthly temp stats 2023}
+# Define input and output folders
+input_folder <- "../data/temp_HD"
+output_folder <- "../monthly_summary_temp"
+dir.create(output_folder, showWarnings = FALSE)
+
+# List all .gpkg files
+gpkg_files <- list.files(input_folder, pattern = "\\.gpkg$", full.names = TRUE)
+
+# Create an empty list to store monthly summaries
+monthly_stats_all <- list()
+
+# Loop through each .gpkg file
+for (file in gpkg_files) {
+  cat("\nProcessing:", basename(file), "\n")
+
+  # ---- Load and preprocess temp data ----
+  temp <- sf::read_sf(file)
+  temp <- temp[!is.na(temp$temperature), ]
+  temp <- st_transform(temp, crs = "EPSG:32632")
+
+  temp <- temp %>%
+    mutate(dateobserved = as.POSIXct(dateobserved, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin")) %>%
+    filter(year(dateobserved) == 2023) %>%
+    mutate(month = month(dateobserved, label = TRUE, abbr = TRUE))
+
+  # ---- Monthly statistics: mean, SD, min, max ----
+  monthly_stats <- temp %>%
+    group_by(month) %>%
+    summarise(
+      mean_temp = mean(temperature, na.rm = TRUE),
+      sd_temp   = sd(temperature, na.rm = TRUE),
+      min_temp  = min(temperature, na.rm = TRUE),
+      max_temp  = max(temperature, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(source = basename(file))
+
+  # Store result
+  monthly_stats_all[[basename(file)]] <- monthly_stats
+
+  # Save as CSV
+  out_csv <- file.path(output_folder, paste0(tools::file_path_sans_ext(basename(file)), "_monthly_stats_2023.csv"))
+  write.csv(monthly_stats, out_csv, row.names = FALSE)
+}
+
+# ---- Combine all into one summary table ----
+combined_stats <- bind_rows(monthly_stats_all)
+
+# Save combined table
+write.csv(combined_stats, file.path(output_folder, "combined_monthly_stats_2023.csv"), row.names = FALSE)
+```
+
+```{r plot monthly mean temp and std}
+ggplot(combined_stats, aes(x = month, y = mean_temp, group = source, color = source)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(
+    title = "Monthly Mean Temperatures (2023)",
+    x = "Month", y = "Mean Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+ggplot(combined_stats, aes(x = month, y = sd_temp, group = source, color = source)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(
+    title = "Monthly Temperature Standard Deviation (2023)",
+    x = "Month", y = "Standard Deviation (°C)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+#ggsave(file.path(output_folder, "monthly_mean_temperatures_2023.png"), width = 10, height = 5, dpi = 300)
+```
 
 ```{r}
-ggplot(temp, aes(x = dateobserved, y = temperature)) +
-  geom_line(alpha = 0.3) +
-  labs(title = "Temperature Over Time", x = "Time", y = "Temperature (°C)")
-
+combined_stats
 ```
+
+--------------------------------------------------------------------------------
 
 Calculate mean temperature for each measurement station for the month of July
 
@@ -79,10 +266,12 @@ ggplot(temp_mm, aes(x = reorder(stationname, monthly_mean_temperature),
   theme_minimal()
 ```
 
-```{r}
-library(sf)
-library(dplyr)
+--------------------------------------------------------------------------------
 
+COULD MAYBE BE USED IN THE FUTURE TO COMBINE ALL THE TEMP MEASUREMENTS FROM ONE 
+YEAR INTO ONE LAYER:
+
+```{r}
 # List all .gpkg files
 gpkg_files <- list.files("../data/temp_HD/", pattern = "\\.gpkg$", full.names = TRUE)
 
@@ -96,17 +285,4 @@ st_write(all_data, "../data/combined_temp_data.gpkg", layer = "all_temp_data", d
 
 
 temp_2023 <- sf::read_sf('../data/sensor_data_year_2023.gpkg')
-
 ```
-
-```{r}
-# Make sure dateobserved is in POSIXct or Date format
-temp_2023$dateobserved <- as.POSIXct(temp_2023$dateobserved)
-
-# Calculate monthly mean temperature
-temp_mm_2023 <- temp_2023 %>%
-  mutate(month = floor_date(dateobserved, unit = "month")) %>%
-  group_by(month) %>%
-  summarise(monthly_mean_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
-```
-
