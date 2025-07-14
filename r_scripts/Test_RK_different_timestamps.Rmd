@@ -298,43 +298,47 @@ for (ts in timestamps) {
   # STEP 4: Compute anisotropy & fit directional variogram
   # ------------------------------------------------
   
+  # Compute empirical variogram map of model residuals
+  # This helps visualize spatial autocorrelation in all directions
   varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
                     # cutoff is half the spatial extent (or diameter) of the study area
                     cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
                     # scaled relative to the resolution of the grid
                     width = 30 * grids_sp@grid@cellsize[1])
 
+  # Store cutoff and bin width values for reuse and labeling
   cutoff_val <- sqrt(areaSpatialGrid(grids_sp)) / 2
   width_val  <- 30 * grids_sp@grid@cellsize[1]
   
+  # Report how many rows are in variogram map
   cat("Variogram map has", nrow(as.data.frame(varmap)), "rows\n")
   
+  # Define output filename for the variogram map plot
   file_varmap <- file.path(output_dir, paste0(ts, "_variogram_map.png"))
   
+  # Plot and save the directional variogram map
   png(file_varmap, width = 8, height = 6, units = "in", res = 300)
-  
-    print(
+  print(
     plot(varmap,
          col.regions = grey(rev(seq(0, 1, 0.025))),
          main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)", 
-                        cutoff_val / 1000, width_val / 1000))
+                        cutoff_val / 1000, width_val / 1000)) # label in km
   )
   dev.off()
   
   # Compute directional variograms for North–South (0°) and East–West (90°)
   rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha=c(0,90))
   
-  
+  # Fit theoretical exponential variogram model to the directional variograms
   rvgm.temp <- fit.variogram(rv.temp,
       vgm(psill=var(temp_shm.sf$residuals),
           "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
   
-  # Set filename for directional variogram fit
+  # Define output filename for directional variogram fit plot
   file_varfit <- file.path(output_dir, paste0(ts, "_directional_variogram_fit.png"))
   
-  # Plot and save to PNG
+  # Plot the empirical and fitted directional variograms and save
   png(file_varfit, width = 8, height = 6, units = "in", res = 300)
-  
   print(
     plot(rv.temp, rvgm.temp,
          main = "Directional Variogram Fit (0° vs 90°)",
@@ -346,27 +350,55 @@ for (ts in timestamps) {
   # STEP 5: Cross-validation of residual kriging model
   # ------------------------------------------------
 
-  # Cross-validation of the kriging model
+  # Perform leave-one-out cross-validation (LOOCV) of the kriging model
   cv_resid <- krige.cv(residuals ~ 1,
                        locations = temp_shm.sf,
                        model = rvgm.temp,
-                       nfold = nrow(temp_shm.sf),       # or nrow(temp_shm.sf) for LOOCV
-                       nmax = 10)
+                       nfold = nrow(temp_shm.sf),   # one fold per observation = LOOCV
+                       nmax = 10)                   # max number of neighbors used for prediction
   
-  # Metrics
+  # Compute CV metrics
   cv_rmse <- sqrt(mean(cv_resid$residual^2))
   cv_mae  <- mean(abs(cv_resid$residual))
   cv_me   <- mean(cv_resid$residual)
   
-  cat("Cross-Validation RMSE:", round(cv_rmse, 2), "\n")
-  cat("Cross-Validation MAE :", round(cv_mae, 2), "\n")
-  cat("Cross-Validation Bias:", round(cv_me, 2), "\n")
+  cat("CV RMSE:", round(cv_rmse, 2), "\n")
+  cat("CV MAE :", round(cv_mae, 2), "\n")
+  cat("CV Bias:", round(cv_me, 2), "\n")
   
-  ggplot(cv_resid, aes(x = var1.pred, y = residual)) +
+  # Create df with CV metrics for current timestamp
+  cv_metrics <- data.frame(
+    timestamp = ts,
+    cv_rmse   = cv_rmse,
+    cv_mae    = cv_mae,
+    cv_bias   = cv_me
+  )
+  
+  # Append metrics to tracking df across all time steps
+  if (!exists("cv_metrics_all")) {
+    cv_metrics_all <- cv_metrics
+  } else {
+    cv_metrics_all <- rbind(cv_metrics_all, cv_metrics)
+  }
+  
+  # Create and save scatterplot of predicted vs residual values from CV
+  p_cv <- ggplot(cv_resid, aes(x = var1.pred, y = residual)) +
     geom_point() +
     geom_hline(yintercept = 0, linetype = "dashed") +
-    labs(title = "Cross-validation residuals", x = "Predicted", y = "Residual")
+    labs(title = "Cross-validation Residuals", x = "Predicted", y = "Residual") +
+    theme_minimal(base_size = 12)
   
+  ggsave(filename = file.path(output_dir, paste0(ts, "_cv_residuals_plot.png")),
+         plot = p_cv, width = 8, height = 6, dpi = 300)
+
+  # ------------------------------------------------
+  # STEP 6: Predict regression trend and kriging residuals
+  # ------------------------------------------------
+    
+  # CONTINUE WORKING HERE
+  
+  
+  # Define a gstat object for kriging using the fitted residual variogram
   g.resid <- gstat(
     id = c("residuals"),
     formula = residuals ~ 1,
@@ -374,11 +406,7 @@ for (ts in timestamps) {
     nmax = 31,
     model = rvgm.temp
   )
-    
-  # ------------------------------------------------
-  # STEP 6: Predict regression trend and kriging residuals
-  # ------------------------------------------------
-    
+  
   # Predict the temperature trend component using the regression model
   locTEMP.reg <- predict(lm.temp_shm, grids_sp)
   
@@ -437,6 +465,10 @@ for (ts in timestamps) {
 # Save all LM metrics to a single CSV file
 metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
 write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
+
+# Save all CV metrics to a single CSV file
+cv_file <- file.path(output_dir, "cross_validation_metric.csv")
+write.csv(cv_metrics_all, cv_file, row.names = FALSE)
 
 ```
 
