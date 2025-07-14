@@ -395,9 +395,6 @@ for (ts in timestamps) {
   # STEP 6: Predict regression trend and kriging residuals
   # ------------------------------------------------
     
-  # CONTINUE WORKING HERE
-  
-  
   # Define a gstat object for kriging using the fitted residual variogram
   g.resid <- gstat(
     id = c("residuals"),
@@ -419,9 +416,17 @@ for (ts in timestamps) {
   # Add the RK predictions as a new variable to the spatial grid object
   grids_sp$rk_pred <- rk.pred
   
-  # Plot RK results overlayed with stations
-  spplot(grids_sp, "rk_pred", main = "Regression Kriging Prediction (°C)",
-         sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
+  # Define output filename for the RK prediction map
+  rk_file <- file.path(output_dir, paste0(ts, "_rk_prediction_map", ".png"))
+  
+  # Generate and save the RK prediction map
+  png(rk_file, width = 8, height = 6, units = "in", res = 300)
+  print(
+    spplot(grids_sp, "rk_pred",
+           main = paste("Regression Kriging Prediction (°C)\nTimestamp:", ts),
+           sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
+  )
+  dev.off()
   
   # ------------------------------------------------
   # STEP 7: Evaluate RK predictions at observation stations
