@@ -44,6 +44,158 @@ library(tmap)
 
 --------------------------------------------------------------------------------
 
+FOR TESTRUN WITH HOURLY MEANS
+
+```{r Load and preprocess data}
+
+# ================================================
+# DATA LOADING, CLEANING, AND COVARIATE PREPARATION
+# ================================================
+
+# Read temperature data
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
+
+# Removes rows where temp is NA
+temp <- temp[!is.na(temp$temperature), ] 
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Ensure dateobserved is in the correct date-time format with German timezone
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
+
+# Calculate hour count since epoch, rounded down to current hour
+temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+
+# Test the results
+print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
+
+# Calculate mean temperature for each station and hour during July
+temp_hm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
+  group_by(stationname, chour) %>%                # Group by station and hour
+  summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+  mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+
+# Load elevation data
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem, y = crs(temp))
+
+# Load Tree Canopy Height
+tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the canopy height data to match correct CRS
+tch <- terra::project(tch, y = crs(temp))
+
+# Check if the two covariates have the same crs
+crs(tch) == crs(dem)
+
+# Load Building Height data
+ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
+
+# Reproject the building height data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, y = crs(temp))
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
+
+# Create a Raster Stack for all the covariate information
+
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elev", "canopy", "bldg")
+
+# Also add lat and lon to the raster stack
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+
+# Extract coordinates of the measurement stations
+# maybe use them as covariates
+
+# Extract coordinates and data into a data frame
+coords <- st_coordinates(temp)
+locs <- cbind(temp, coords)
+locs <- as.data.frame(locs)
+
+# Keep only one row per station and select relevant columns
+station_coords <- locs %>%
+  distinct(stationname, .keep_all = TRUE) %>%
+  select(stationname, X, Y)
+
+coordinates(station_coords) <- ~ X + Y
+proj4string(station_coords) <- CRS(proj4string(grids_sp))
+```
+
+```{r}
+# Adding covariates to temperature data
+
+# Convert Spatial object to a RasterBrick
+r_brick <- brick(grids_sp)
+
+# Convert the RasterBrick to a terra SpatRaster object
+grid_terra <- rast(r_brick)
+
+# Select, for each station, the record at its latest hour
+sel_temp_hm <- temp_hm %>%
+  group_by(stationname) %>%
+  slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# Extract raster values at the point locations
+extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
+
+# Remove the first column (ID)
+extracted_vals <- extracted_vals[,-1]
+
+# Combine the point data with the extracted raster values
+temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
+
+str(temp_shm.ex)
+```
+
+--------------------------------------------------------------------------------
+
 Load the temperature measurements as input data
 
 ```{r}
@@ -163,9 +315,9 @@ Histogram to check data distribution
 par(mfrow = c(1, 3))
 
 # Plot the histograms
-hist(temp_mm$elevation, main = "Elevation", xlab = "Elevation [m]", col = "lightblue")
-hist(temp_mm$tree_canopy_height, main = "Global Forest Canopy Height", xlab = "Height [m]", col = "lightgreen")
-hist(temp_mm$building_height, main = "Average of the Gross Building Height", xlab = "Height [m]", col = "lightcoral")
+hist(temp_hm$elevation, main = "Elevation", xlab = "Elevation [m]", col = "lightblue")
+hist(temp_hm$tree_canopy_height, main = "Global Forest Canopy Height", xlab = "Height [m]", col = "lightgreen")
+hist(temp_hm$building_height, main = "Average of the Gross Building Height", xlab = "Height [m]", col = "lightcoral")
 ```
 
 Visualize relationships between monthly mean temperature and environmental factors

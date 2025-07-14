@@ -29,6 +29,7 @@ library(randomForest)
 library(nlme)
 library(automap)
 library(mgcv)
+library(caTools)
 
 # Data Manipulation & Wrangling
 library(tidyverse)
@@ -290,7 +291,6 @@ str(grids_sp)
 # Plot all the covariates before proceeding with regression and kriging
 
 grid.arrange(
-  spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
   spplot(grids_sp["elev"],    
          main = "Elevation [m]",           
          col.regions = viridis::viridis(100)),
@@ -304,6 +304,7 @@ grid.arrange(
 )
 
 # If needed 
+#   spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
 ```
 
 ------------------------------------------------------------------------
@@ -359,6 +360,61 @@ temp_shm.sf <- st_as_sf(temp_shm.ex)
 
 # Confirm the resulting object's class
 str(temp_shm.sf)
+```
+
+Test with GAM model
+
+GAM Model
+Generalized Additive Models for each of the covariates
+
+Approach based on: https://www.geeksforgeeks.org/generalized-additive-models-using-r/
+
+GAM for all three covariates
+
+Comment: A general rule of thumb is to use a high number of splines and use cross-validation of lambda (λ) values to find the model that generalises best. Remember we can have different splines and lambda values for every variable in our model.
+
+```{r}
+gam_all_mm <- gam(mh_temp ~ 
+                  elev + 
+                  canopy + 
+                  bldg, 
+                data = temp_shm.ex)
+summary(gam_all_mm)
+```
+
+```{r}
+temp_shm.ex$gam_residuals <- gam_all_mm$residuals
+
+# Inspect the structure of the updated data frame
+str(temp_shm.ex)
+
+# Convert the data frame into an 'sf' spatial object using the existing geometry
+temp_shm.sf <- st_as_sf(temp_shm.ex)
+
+# Confirm the resulting object's class
+str(temp_shm.sf)
+```
+
+
+Evaluate model performance
+
+```{r}
+#check the wiggliness of the model 
+k.check(gam_all_mm)
+
+gam.check(gam_all_mm)
+
+# Mean Squared Error
+mse_gam_mm = mean((test_gam_mm$monthly_mean_temperature - pred_gam_mm)^2)
+print(paste("GAM MSE:", round(mse_gam_mm, 4)))
+
+# Mean Absolute Error
+mae_gam_mm = caret::MAE(test_gam_mm$monthly_mean_temperature, pred_gam_mm)
+print(paste("GAM MAE:", round(mae_gam_mm, 4)))
+
+# Root Mean Squared Error
+rmse_gam_mm = caret::RMSE(test_gam_mm$monthly_mean_temperature, pred_gam_mm)
+print(paste("GAM RMSE:", round(rmse_gam_mm, 4)))
 ```
 
 ------------------------------------------------------------------------
@@ -548,8 +604,8 @@ rk.pred <- locTEMP.reg + locTEMP$residuals.pred
 grids_sp$rk_pred <- rk.pred
 
 # Convert station coordinates to a SpatialPoints object
-coordinates(station_coords) <- ~ X + Y
-proj4string(station_coords) <- CRS(proj4string(grids_sp))
+#coordinates(station_coords) <- ~ X + Y
+#proj4string(station_coords) <- CRS(proj4string(grids_sp))
 
 # Plot RK results overlayed with stations
 spplot(grids_sp, "rk_pred", main = "Regression Kriging Prediction (°C)",

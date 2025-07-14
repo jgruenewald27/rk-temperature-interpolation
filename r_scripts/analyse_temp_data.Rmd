@@ -268,6 +268,30 @@ ggplot(temp_mm, aes(x = reorder(stationname, monthly_mean_temperature),
 
 --------------------------------------------------------------------------------
 
+Calculate Spearman
+Explanation why I chose Spearman:
+- Pearson’s correlation assumes both normality and linearity in the relationship between X and Y. 
+- Spearman’s correlation has less stringent assumptions, assuming only that the relationship is monotonic. This means that the relationship has to be consistently increasing or decreasing, but that it does not have to do so in a linear manner (see left). 
+- Spearman’s correlation also performs better than Pearson’s correlation in instances where there are outliers or very few data point -> this is the case for my data.
+
+```{r}
+
+
+```{r}
+cor.test(temp_mm$elevation, temp_mm$monthly_mean_temperature, method = "spearman")
+
+cor.test(temp_mm$tree_canopy_height, temp_mm$monthly_mean_temperature, method = "spearman")
+
+cor.test(temp_mm$building_height, temp_mm$monthly_mean_temperature, method = "spearman")
+```
+
+Spearman’s test is non-parametric and based on ranking the values. It assumes that all values are distinct so that ranks are unique. When ties occur (e.g., two identical temperatures or building heights) the exact p-value can't be computed. So for these results, p-value can't be fully trusted (elevation has a statistically significant relationship with temperature) be the correlation coefficient (rho) can still be trusted.
+It is also an influencing factor, that I only work with n=31 data points
+```
+
+
+--------------------------------------------------------------------------------
+
 COULD MAYBE BE USED IN THE FUTURE TO COMBINE ALL THE TEMP MEASUREMENTS FROM ONE 
 YEAR INTO ONE LAYER:
 
