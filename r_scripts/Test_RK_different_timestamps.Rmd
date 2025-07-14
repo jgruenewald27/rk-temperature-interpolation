@@ -307,11 +307,19 @@ for (ts in timestamps) {
   cutoff_val <- sqrt(areaSpatialGrid(grids_sp)) / 2
   width_val  <- 30 * grids_sp@grid@cellsize[1]
   
-  # Plot the computed variogram map
-  plot(varmap,
-       col.regions = grey(rev(seq(0, 1, 0.025))),
-       main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)", 
-                      cutoff_val / 1000, width_val / 1000))
+  cat("Variogram map has", nrow(as.data.frame(varmap)), "rows\n")
+  
+  file_varmap <- file.path(output_dir, paste0(ts, "_variogram_map.png"))
+  
+  png(file_varmap, width = 8, height = 6, units = "in", res = 300)
+  
+    print(
+    plot(varmap,
+         col.regions = grey(rev(seq(0, 1, 0.025))),
+         main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)", 
+                        cutoff_val / 1000, width_val / 1000))
+  )
+  dev.off()
   
   # Compute directional variograms for North–South (0°) and East–West (90°)
   rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha=c(0,90))
@@ -321,10 +329,18 @@ for (ts in timestamps) {
       vgm(psill=var(temp_shm.sf$residuals),
           "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
   
-  # Plot the empirical and fitted directional variograms
-  plot(rv.temp, rvgm.temp,
-       main = "Directional Variogram Fit (0° vs 90°)",
-       plot.nu=FALSE, cex=2, pch="+", col="black")
+  # Set filename for directional variogram fit
+  file_varfit <- file.path(output_dir, paste0(ts, "_directional_variogram_fit.png"))
+  
+  # Plot and save to PNG
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  
+  print(
+    plot(rv.temp, rvgm.temp,
+         main = "Directional Variogram Fit (0° vs 90°)",
+         plot.nu = FALSE, cex = 2, pch = "+", col = "black")
+  )
+  dev.off()
   
   # ------------------------------------------------
   # STEP 5: Cross-validation of residual kriging model
