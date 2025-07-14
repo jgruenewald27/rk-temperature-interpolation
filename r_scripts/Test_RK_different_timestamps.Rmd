@@ -43,7 +43,7 @@ library(lattice)
 
 --------------------------------------------------------------------------------
 
-```{r Load and preprocess temp data}
+```{r Load and preprocess data}
 
 # Read temperature data
 temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
@@ -63,11 +63,6 @@ temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
 
 # Test the results
 print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
-```
-
---------------------------------------------------------------------------------
-
-```{r Calculate hourly means for each unique stations for the month of July}
 
 # Calculate mean temperature for each station and hour during July
 temp_hm <- temp %>%
@@ -75,20 +70,14 @@ temp_hm <- temp %>%
   group_by(stationname, chour) %>%                # Group by station and hour
   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
   mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
-```
 
---------------------------------------------------------------------------------
-
-```{r Load the elevation data}
-
+# Load elevation data
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
 dem <- terra::project(dem, y = crs(temp))
-```
 
-```{r Load the tree canopy height data}
-
+# Load Tree Canopy Height
 tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
 
 # Mask out all values which are assigned to water and have value 101
@@ -100,10 +89,8 @@ tch <- terra::project(tch, y = crs(temp))
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
-```
 
-```{r Load the building height data}
-
+# Load Building Height data
 ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
 
 # Reproject the building height data to match correct CRS
@@ -111,9 +98,7 @@ ghs_bh <- terra::project(ghs_bh, y = crs(temp))
 
 # Check if CRS is correct
 crs(ghs_bh) == crs(dem)
-```
 
-```{r}
 # Create a Raster Stack for all the covariate information
 
 # Check resolution of each raster
@@ -132,9 +117,7 @@ env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
 names(env_stack) <- c("elev", "canopy", "bldg")
 
 env_stack
-```
 
-```{r}
 # Also add lat and lon to the raster stack
 
 # Create coordinate rasters
@@ -148,9 +131,7 @@ values(lon_raster) <- lon
 values(lat_raster) <- lat
 names(lon_raster) <- "lon"
 names(lat_raster) <- "lat"
-```
 
-```{r}
 # Stack the three raster layers
 grids <- c(env_stack, lon_raster, lat_raster)
 
@@ -166,13 +147,7 @@ grids_ras <- stack(grids)
 grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
 
 grids_sp@data
-```
 
---------------------------------------------------------------------------------
-
-Extract coordinates of the measurement stations
-
-```{r}
 # Extract coordinates of the measurement stations
 # maybe use them as covariates
 
@@ -192,11 +167,19 @@ proj4string(station_coords) <- CRS(proj4string(grids_sp))
 
 --------------------------------------------------------------------------------
 
-TEST IF LOOP WORKS
-
 ```{r create_output_folder}
-output_dir <- "../RK_Results"
+output_dir <- "../rk_results"
 if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Define subdirectories for specific output types
+variogram_dir <- file.path(output_dir, "variogram")
+cv_dir        <- file.path(output_dir, "cross_validation")
+rk_dir        <- file.path(output_dir, "rk_predictions")
+
+# Create subdirectories if they don't exist
+dir.create(variogram_dir, showWarnings = FALSE)
+dir.create(cv_dir, showWarnings = FALSE)
+dir.create(rk_dir, showWarnings = FALSE)
 ```
 
 ```{r main_loop}
@@ -314,7 +297,7 @@ for (ts in timestamps) {
   cat("Variogram map has", nrow(as.data.frame(varmap)), "rows\n")
   
   # Define output filename for the variogram map plot
-  file_varmap <- file.path(output_dir, paste0(ts, "_variogram_map.png"))
+  file_varmap <- file.path(variogram_dir, paste0(ts, "_variogram_map.png"))
   
   # Plot and save the directional variogram map
   png(file_varmap, width = 8, height = 6, units = "in", res = 300)
@@ -335,7 +318,7 @@ for (ts in timestamps) {
           "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
   
   # Define output filename for directional variogram fit plot
-  file_varfit <- file.path(output_dir, paste0(ts, "_directional_variogram_fit.png"))
+  file_varfit <- file.path(variogram_dir, paste0(ts, "_directional_variogram_fit.png"))
   
   # Plot the empirical and fitted directional variograms and save
   png(file_varfit, width = 8, height = 6, units = "in", res = 300)
@@ -388,7 +371,7 @@ for (ts in timestamps) {
     labs(title = "Cross-validation Residuals", x = "Predicted", y = "Residual") +
     theme_minimal(base_size = 12)
   
-  ggsave(filename = file.path(output_dir, paste0(ts, "_cv_residuals_plot.png")),
+  ggsave(filename = file.path(cv_dir, paste0(ts, "_cv_residuals_plot.png")),
          plot = p_cv, width = 8, height = 6, dpi = 300)
 
   # ------------------------------------------------
@@ -417,7 +400,7 @@ for (ts in timestamps) {
   grids_sp$rk_pred <- rk.pred
   
   # Define output filename for the RK prediction map
-  rk_file <- file.path(output_dir, paste0(ts, "_rk_prediction_map", ".png"))
+  rk_file <- file.path(rk_dir, paste0(ts, "_rk_prediction_map", ".png"))
   
   # Generate and save the RK prediction map
   png(rk_file, width = 8, height = 6, units = "in", res = 300)
@@ -434,6 +417,8 @@ for (ts in timestamps) {
   
   # Match station coordinates with observed stations only
   obs_coords <- st_coordinates(temp_shm.sf)
+  
+  # Convert to SpatialPoints object with same CRS as prediction grid
   obs_stations <- SpatialPoints(coords = obs_coords, proj4string = CRS(proj4string(grids_sp)))
   
   # Extract only at observed station locations
@@ -442,16 +427,14 @@ for (ts in timestamps) {
   # Combine predictions with observations
   rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$mh_temp)
 
-  
-  # Extract predicted values from the RK surface at station coordinates
-  #rk_at_stations <- sp::over(station_coords, grids_sp)
+  # Check if predicted and observed data match in length
   cat("Predicted rows:", nrow(rk_at_obs), "\n")
   cat("Observed rows :", length(temp_shm.sf$mh_temp), "\n")
   
   # Calculate prediction error
   rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
   
-  # Metrics
+  # Calculate evaluation metrics for RK performance
   rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
   mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
   bias <- mean(rk_eval$residual, na.rm = TRUE)
@@ -460,11 +443,31 @@ for (ts in timestamps) {
   cat("RK MAE  :", round(mae, 2), "\n")
   cat("RK Bias :", round(bias, 2), "\n")
   
-  ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
+  # Store metrics in df for current timestamp
+  rk_metrics <- data.frame(
+    timestamp = ts,
+    rk_rmse   = rmse,
+    rk_mae    = mae,
+    rk_bias   = bias
+  )
+  
+  # Append metrics to cumulative RK metrics tracking object
+  if (!exists("rk_metrics_all")) {
+    rk_metrics_all <- rk_metrics
+  } else {
+    rk_metrics_all <- rbind(rk_metrics_all, rk_metrics)
+  }
+  
+  # Save RK residuals plot
+  rk_resid_plot <- ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
     geom_point() +
     geom_hline(yintercept = 0, linetype = "dashed") +
     labs(title = "RK Prediction Residuals at Stations",
-         x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)")
+         x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)") +
+    theme_minimal(base_size = 12)
+  
+  ggsave(filename = file.path(rk_dir, paste0(ts, "_rk_residuals_plot.png")),
+         plot = rk_resid_plot, width = 8, height = 6, dpi = 300)
 }
 
 # Save all LM metrics to a single CSV file
@@ -472,387 +475,13 @@ metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
 write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
 
 # Save all CV metrics to a single CSV file
-cv_file <- file.path(output_dir, "cross_validation_metric.csv")
+cv_file <- file.path(output_dir, "cross_validation_metrics.csv")
 write.csv(cv_metrics_all, cv_file, row.names = FALSE)
 
+# Save all RK metrics to a single CSV file
+rk_file <- file.path(output_dir, "rk_metrics.csv")
+write.csv(rk_metrics_all, rk_file, row.names = FALSE)
 ```
-
-WORKS WITH EMPTY RESULTS FOR THE PLOTS AND WEIRD KRIGING OUTPUTS
-
-```{r main_loop}
-# Get unique timestamps
-timestamps <- unique(temp_hm$chour)[1:24]  # First 24 unique chour timestamps
-
-# Loop through each timestamp
-total_metrics <- data.frame()
-
-for (ts in timestamps) {
-  cat("\n\n=====================\nProcessing timestamp:", ts, "\n=====================\n")
-
-  # ---- STEP 1: Select data ----
-  sel_temp_hm <- temp_hm %>%
-    filter(chour == ts) %>%
-  
-
-    
-  # ---- STEP 1: Select data ----
-  sel_temp_hm <- temp_hm %>%
-    filter(chour == ts) %>%
-    group_by(stationname) %>%
-    slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
-    ungroup()
-
-  if (nrow(sel_temp_hm) < 5) next  # Skip if too few data points
-  
-  
-    # Plot selected data
-  plot(sel_temp_hm$mh_temp,
-       pch = 21,                     
-       col = "black",              
-       bg = "grey",               
-       cex = 1.4,               
-       main = paste("Hourly Mean Temperature at 31 Stations\n( Timestamp:", unique(sel_temp_hm$hour),")"),
-       xlab = "Station Index",
-       ylab = "Mean Temperature (°C)",
-       ylim = range(sel_temp_hm$mh_temp) + c(-0.5, 0.5),
-       las = 1,                     
-       bty = "l"                     
-  )
-  grid()
-  
-  # Save temperature plot
-  temp_plot_file <- file.path(output_dir, paste0(ts, "_temperature_plot.png"))
-  png(temp_plot_file)
-  plot(sel_temp_hm$mh_temp,
-       pch = 21,
-       col = "black",
-       bg = "grey",
-       cex = 1.4,
-       main = paste("Hourly Mean Temperature at 31 Stations\n( Timestamp:", unique(sel_temp_hm$hour),")"),
-       xlab = "Station Index",
-       ylab = "Mean Temperature (°C)",
-       ylim = range(sel_temp_hm$mh_temp) + c(-0.5, 0.5),
-       las = 1,
-       bty = "l"
-  )
-  grid()
-  dev.off()
-
-  # ---- STEP 2: Add covariates ----
-  r_brick <- brick(grids_sp)
-  grid_terra <- rast(r_brick)
-  extracted_vals <- terra::extract(grid_terra, sel_temp_hm)[,-1]
-  temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
-
-  # ---- STEP 3: Fit linear model and prep spatial data ----
-  lm.temp_shm <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
-  temp_shm.ex$residuals <- lm.temp_shm$residuals
-  temp_shm.sf <- st_as_sf(temp_shm.ex)
-
-  # ---- STEP 4: Anisotropy + Variogram ----
-  varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
-                      cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
-                      width = 30 * grids_sp@grid@cellsize[1])
-
-  anisotropy_plot_file <- file.path(output_dir, paste0(ts, "_anisotropy_lrm.png"))
-  png(anisotropy_plot_file)
-  plot(varmap, col.regions = grey(rev(seq(0, 1, 0.025))))
-  dev.off()
-
-  rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha = c(0,90))
-  rvgm.temp <- fit.variogram(rv.temp, vgm(psill=var(temp_shm.sf$residuals), "Exp", nugget=0))
-
-  # ---- STEP 5: Cross Validation ----
-  cv_resid <- krige.cv(residuals ~ 1, locations = temp_shm.sf, model = rvgm.temp,
-                       nfold = nrow(temp_shm.sf), nmax = 10)
-  cv_metrics <- data.frame(
-    chour = ts,
-    cv_rmse = sqrt(mean(cv_resid$residual^2)),
-    cv_mae  = mean(abs(cv_resid$residual)),
-    cv_bias = mean(cv_resid$residual)
-  )
-  write.csv(cv_resid, file.path(output_dir, paste0(ts, "_LOOCV_lrm.csv")), row.names = FALSE)
-  write.csv(cv_metrics, file.path(output_dir, paste0(ts, "_LOOCV_metrics_lrm.csv")), row.names = FALSE)
-
-  # ---- STEP 6: Regression Kriging ----
-  locTEMP.reg <- predict(lm.temp_shm, grids_sp)
-  g.resid <- gstat(id = "residuals", formula = residuals ~ 1, data = temp_shm.sf, model = rvgm.temp)
-  locTEMP <- predict(g.resid, grids_sp, beta = 1, BLUE = FALSE)
-  rk.pred <- locTEMP.reg + locTEMP$residuals.pred
-  grids_sp$rk_pred <- rk.pred
-
-  # ---- STEP 7: RK Evaluation ----
-  # Extract RK predictions at station points
-  rk_at_stations <- sp::over(station_coords, grids_sp)
-  # Remove rows with missing RK predictions
-  valid_idx <- which(!is.na(rk_at_stations$rk_pred))
-  # Subset both RK predictions and observed temps
-  # THIS COULD MEAN THAT PERFORMANCE EVALUATION IS DONE WITH LESS THAN 31 POINTS
-  rk_eval <- cbind(rk_at_stations[valid_idx, , drop=FALSE],
-                 obs = temp_shm.sf$mh_temp[valid_idx])
-  rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
-  rk_metrics <- data.frame(
-    chour = ts,
-    rk_rmse = sqrt(mean(rk_eval$residual^2, na.rm = TRUE)),
-    rk_mae  = mean(abs(rk_eval$residual), na.rm = TRUE),
-    rk_bias = mean(rk_eval$residual, na.rm = TRUE)
-  )
-  write.csv(rk_eval, file.path(output_dir, paste0(ts, "_RK_eval_lrm.csv")), row.names = FALSE)
-  write.csv(rk_metrics, file.path(output_dir, paste0(ts, "_RK_metrics_lrm.csv")), row.names = FALSE)
-
-  # ---- Optional RK map plot ----
-  rk_plot_file <- file.path(output_dir, paste0(ts, "_RK_map_lrm.png"))
-  png(rk_plot_file)
-  spplot(grids_sp, "rk_pred", main = paste("RK Prediction -", ts))
-  dev.off()
-
-  total_metrics <- rbind(total_metrics, cbind(cv_metrics, rk_metrics[,2:4]))
-}
-
-# Save all combined metrics
-write.csv(total_metrics, file.path(output_dir, "All_Timestamps_Metrics_lrm.csv"), row.names = FALSE)
-```
-
-```{r metrics_comparison_plot, echo=TRUE, message=FALSE}
-# Convert timestamp to POSIXct if needed
-total_metrics$chour <- as.POSIXct(total_metrics$chour)
-
-# Pivot the data for ggplot
-library(tidyr)
-
-metrics_long <- total_metrics %>%
-  select(chour, cv_rmse, rk_rmse, cv_mae, rk_mae, cv_bias, rk_bias) %>%
-  pivot_longer(
-    cols = -chour,
-    names_to = c("type", "metric"),
-    names_sep = "_",
-    values_to = "value"
-  )
-
-# Plot
-ggplot(metrics_long, aes(x = chour, y = value, color = type, group = type)) +
-  geom_line(linewidth = 1) +
-  geom_point() +
-  facet_wrap(~ metric, scales = "free_y", ncol = 1) +
-  labs(title = "Comparison of LOOCV and RK Metrics Across Timestamps",
-       x = "Timestamp", y = "Metric Value", color = "Type") +
-  theme_minimal(base_size = 12) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-```
-
-
---------------------------------------------------------------------------------
-
-  
-```{r}
-# Select one specific hourly mean for all the measurement stations
-
-# Select, for each station, the record at its latest hour
-sel_temp_hm <- temp_hm %>%
-  group_by(stationname) %>%
-  slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
-  ungroup()
-
-# Plot selected data
-plot(sel_temp_hm$mh_temp,
-     pch = 21,                     
-     col = "black",              
-     bg = "grey",               
-     cex = 1.4,               
-     main = paste("Hourly Mean Temperature at 31 Stations\n( Timestamp:", unique(sel_temp_hm$hour),")"),
-     xlab = "Station Index",
-     ylab = "Mean Temperature (°C)",
-     ylim = range(sel_temp_hm$mh_temp) + c(-0.5, 0.5),
-     las = 1,                     
-     bty = "l"                     
-)
-grid()
-```
-
-```{r}
-# Adding covariates to temperature data
-
-# Convert Spatial object to a RasterBrick
-r_brick <- brick(grids_sp)
-
-# Convert the RasterBrick to a terra SpatRaster object
-grid_terra <- rast(r_brick)
-
-# Extract raster values at the point locations
-extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
-
-# Remove the first column (ID)
-extracted_vals <- extracted_vals[,-1]
-
-# Combine the point data with the extracted raster values
-temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
-
-str(temp_shm.ex)
-```
-
-```{r}
-# Fit a linear model predicting mean hourly temperature
-# using elevation, canopy height, and building height as predictors
-lm.temp_shm <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
-
-# Show a summary of the fitted model (coefficients, R², p-values, etc.)
-summary(lm.temp_shm)
-
-# Save the model's residuals back into original df as new column
-temp_shm.ex$residuals <- lm.temp_shm$residuals
-
-# Inspect the structure of the updated data frame
-str(temp_shm.ex)
-
-# Convert the data frame into an 'sf' spatial object using the existing geometry
-temp_shm.sf <- st_as_sf(temp_shm.ex)
-
-# Confirm the resulting object's class
-str(temp_shm.sf)
-```
-
-------------------------------------------------------------------------
-
-Anisotropy
-
-```{r}
-# Compute a directional variogram map of the model residuals
-# Helps to reveal spatial structure (anisotropy) not explained by the model
-
-varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
-                    # cutoff is half the spatial extent (or diameter) of the study area
-                    cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
-                    # scaled relative to the resolution of the grid
-                    width = 30 * grids_sp@grid@cellsize[1])
-
-cutoff_val <- sqrt(areaSpatialGrid(grids_sp)) / 2
-width_val  <- 30 * grids_sp@grid@cellsize[1]
-
-# Plot the computed variogram map
-plot(varmap,
-     col.regions = grey(rev(seq(0, 1, 0.025))),
-     main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)", 
-                    cutoff_val / 1000, width_val / 1000))
-
-# Compute directional variograms for North–South (0°) and East–West (90°)
-rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha=c(0,90))
-
-
-rvgm.temp <- fit.variogram(rv.temp,
-    vgm(psill=var(temp_shm.sf$residuals),
-        "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
-
-# Plot the empirical and fitted directional variograms
-plot(rv.temp, rvgm.temp,
-     main = "Directional Variogram Fit (0° vs 90°)",
-     plot.nu=FALSE, cex=2, pch="+", col="black")
-```
-
-Could the anisotropy which can be visualy identified in the E-W
-direction be caused by the Neckar? Residuals are more dissimilar in this
-direction indicating higher semivariance -\> more difference between
-residuals
-
--   Anisotropy is present -\> Spatial correlation varies by direction
--   Stronger continuity in N–S -\> Lower semivariance at 0° -\> Data is
-    more predictable N–S
--   Weaker continuity in E–W -\> Higher semivariance at 90° -\> Greater
-    variation E–W (anisotropy) Model fit Reasonable in both panels which
-    is a good basis for kriging
-
-------------------------------------------------------------------------
-
-Defining the geostatistical model for residuals
-
-```{r}
-g.resid <- gstat(
-  id = c("residuals"),
-  formula = residuals ~ 1,
-  data = temp_shm.sf,
-  nmax = 31,
-  model = rvgm.temp
-)
-```
-
-------------------------------------------------------------------------
-
-Leave-One-Out Cross Validation applied to ordinary kriging residual
-model
-
-```{r}
-# Cross-validation of the kriging model
-cv_resid <- krige.cv(residuals ~ 1,
-                     locations = temp_shm.sf,
-                     model = rvgm.temp,
-                     nfold = nrow(temp_shm.sf),       # or nrow(temp_shm.sf) for LOOCV
-                     nmax = 10)
-
-# Metrics
-cv_rmse <- sqrt(mean(cv_resid$residual^2))
-cv_mae  <- mean(abs(cv_resid$residual))
-cv_me   <- mean(cv_resid$residual)
-
-cat("Cross-Validation RMSE:", round(cv_rmse, 2), "\n")
-cat("Cross-Validation MAE :", round(cv_mae, 2), "\n")
-cat("Cross-Validation Bias:", round(cv_me, 2), "\n")
-
-ggplot(cv_resid, aes(x = var1.pred, y = residual)) +
-  geom_point() +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(title = "Cross-validation residuals", x = "Predicted", y = "Residual")
-```
-
-```{r}
-# Predict the temperature trend component using the regression model
-locTEMP.reg <- predict(lm.temp_shm, grids_sp)
-
-# OK of the regression residuals to model spatial autocorrelation
-locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
-
-# Combine the regression prediction with kriged residuals to get final RK predictions
-rk.pred <- locTEMP.reg + locTEMP$residuals.pred
-
-# Add the RK predictions as a new variable to the spatial grid object
-grids_sp$rk_pred <- rk.pred
-
-# Convert station coordinates to a SpatialPoints object
-coordinates(station_coords) <- ~ X + Y
-proj4string(station_coords) <- CRS(proj4string(grids_sp))
-
-# Plot RK results overlayed with stations
-spplot(grids_sp, "rk_pred", main = "Regression Kriging Prediction (°C)",
-       sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
-```
-
-Performance of final RK results
-
-```{r}
-# Extract predicted values from the RK surface at station coordinates
-rk_at_stations <- sp::over(station_coords, grids_sp)
-
-# Add observed values to the extracted predictions
-rk_eval <- cbind(rk_at_stations, obs = temp_shm.sf$mh_temp)
-
-# Calculate prediction error
-rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
-
-# Metrics
-rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
-mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
-bias <- mean(rk_eval$residual, na.rm = TRUE)
-
-cat("RK RMSE :", round(rmse, 2), "\n")
-cat("RK MAE  :", round(mae, 2), "\n")
-cat("RK Bias :", round(bias, 2), "\n")
-
-ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
-  geom_point() +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(title = "RK Prediction Residuals at Stations",
-       x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)")
-```
-
-------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
 
