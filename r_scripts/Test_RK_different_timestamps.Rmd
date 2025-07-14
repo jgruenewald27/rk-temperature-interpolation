@@ -186,8 +186,8 @@ station_coords <- locs %>%
   distinct(stationname, .keep_all = TRUE) %>%
   select(stationname, X, Y)
 
-# Inspect the structure
-str(station_coords)
+coordinates(station_coords) <- ~ X + Y
+proj4string(station_coords) <- CRS(proj4string(grids_sp))
 ```
 
 --------------------------------------------------------------------------------
@@ -200,8 +200,12 @@ if (!dir.exists(output_dir)) dir.create(output_dir)
 ```
 
 ```{r main_loop}
+# ================================================
+# Loop through 24 hourly timestamps in `temp_hm`
+# ================================================
+
 # Get unique timestamps
-timestamps <- unique(temp_hm$chour)[1:24]  # First 24 unique chour timestamps
+timestamps <- unique(temp_hm$chour)[1:3]  # Test with first 3 unique chour timestamps
 
 # Loop through each timestamp
 total_metrics <- data.frame()
@@ -211,17 +215,22 @@ all_temp_data <- data.frame()
 for (ts in timestamps) {
   cat("\n\n=====================\nProcessing timestamp:", ts, "\n=====================\n")
 
-  # ---- STEP 1: Select data ----
+  # ------------------------------------------------
+  # STEP 1: Filter hourly data and plot temperature
+  # ------------------------------------------------
   
+  # Select temperature data for the current hour
   sel_temp_hm <- temp_hm %>%
     filter(chour == ts)
   
-  if (nrow(sel_temp_hm) < 20) next  # Skip if too few data points
+  # Skip if fewer than 20 data points for current hour
+  if (nrow(sel_temp_hm) < 20) next
   
+  # Append the selected temperature data to full dataset
   all_temp_data <- rbind(all_temp_data, sel_temp_hm)
-
   
-  # Save temperature plot
+  # Generate line plot showing hourly mean temperature for each station
+  # across the time range covered so far in the loop
   ggplot(all_temp_data, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +
     geom_line() +
     geom_point(size = 1) +
@@ -230,36 +239,64 @@ for (ts in timestamps) {
     theme_minimal(base_size = 12) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
   
+  # Save the temperature plot
   ggsave(file.path(output_dir, "all_stations_hourly_mean_temperature.png"),
        width = 10, height = 6, dpi = 300)
 
-
-  # ---- STEP 2: Add covariates ----
+  # ------------------------------------------------
+  # STEP 2: Add covariates (elev, canopy, bldg) from grid
+  # ------------------------------------------------
   
-  # Convert Spatial object to a RasterBrick
+  # Convert Spatial object to RasterBrick
   r_brick <- brick(grids_sp)
-  # Convert the RasterBrick to a terra SpatRaster object
+  
+  # Convert RasterBrick to terra SpatRaster object
   grid_terra <- rast(r_brick)
+  
   # Extract raster values at the point locations
   extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
+  
   # Remove the first column (ID)
   extracted_vals <- extracted_vals[,-1]
+  
   # Combine the point data with the extracted raster values
   temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
   
-  # ---- STEP 3: Fit linear model and prep spatial data ----
+  # ------------------------------------------------
+  # STEP 3: Fit linear model and prepare spatial data
+  # ------------------------------------------------
   
-  # Fit a linear model predicting mean hourly temperature
-  # using elevation, canopy height, and building height as predictors
+  # Fit linear model
   lm.temp_shm <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
-  # Show a summary of the fitted model (coefficients, R², p-values, etc.)
   summary_lm <- summary(lm.temp_shm)
-  # Save the model's residuals back into original df as new column
+  
+  # Extract model metrics
+  model_metrics <- data.frame(
+    timestamp     = ts,
+    r_squared     = summary_lm$r.squared,
+    adj_r_squared = summary_lm$adj.r.squared,
+    f_statistic   = summary_lm$fstatistic[1],
+    df1           = summary_lm$fstatistic[2],
+    df2           = summary_lm$fstatistic[3],
+    residual_se   = summary_lm$sigma
+  )
+  
+  # Append to tracking data frame
+  if (!exists("lm_metrics_all")) {
+    lm_metrics_all <- model_metrics
+  } else {
+    lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
+  }
+
+  # Save model's residuals back into original df as new column
   temp_shm.ex$residuals <- lm.temp_shm$residuals
-  # Convert the data frame into an 'sf' spatial object using the existing geometry
+  
+  # Convert df into spatial object using existing geometry
   temp_shm.sf <- st_as_sf(temp_shm.ex)
   
-  # ---- STEP 4: Anisotropy + Variogram ----
+  # ------------------------------------------------
+  # STEP 4: Compute anisotropy & fit directional variogram
+  # ------------------------------------------------
   
   varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
                     # cutoff is half the spatial extent (or diameter) of the study area
@@ -288,8 +325,10 @@ for (ts in timestamps) {
   plot(rv.temp, rvgm.temp,
        main = "Directional Variogram Fit (0° vs 90°)",
        plot.nu=FALSE, cex=2, pch="+", col="black")
-
-  # ---- STEP 5: Cross Validation ----
+  
+  # ------------------------------------------------
+  # STEP 5: Cross-validation of residual kriging model
+  # ------------------------------------------------
 
   # Cross-validation of the kriging model
   cv_resid <- krige.cv(residuals ~ 1,
@@ -312,10 +351,77 @@ for (ts in timestamps) {
     geom_hline(yintercept = 0, linetype = "dashed") +
     labs(title = "Cross-validation residuals", x = "Predicted", y = "Residual")
   
+  g.resid <- gstat(
+    id = c("residuals"),
+    formula = residuals ~ 1,
+    data = temp_shm.sf,
+    nmax = 31,
+    model = rvgm.temp
+  )
+    
+  # ------------------------------------------------
+  # STEP 6: Predict regression trend and kriging residuals
+  # ------------------------------------------------
+    
+  # Predict the temperature trend component using the regression model
+  locTEMP.reg <- predict(lm.temp_shm, grids_sp)
+  
+  # OK of the regression residuals to model spatial autocorrelation
+  locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
+  
+  # Combine the regression prediction with kriged residuals to get final RK predictions
+  rk.pred <- locTEMP.reg + locTEMP$residuals.pred
+  
+  # Add the RK predictions as a new variable to the spatial grid object
+  grids_sp$rk_pred <- rk.pred
+  
+  # Plot RK results overlayed with stations
+  spplot(grids_sp, "rk_pred", main = "Regression Kriging Prediction (°C)",
+         sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
+  
+  # ------------------------------------------------
+  # STEP 7: Evaluate RK predictions at observation stations
+  # ------------------------------------------------
+  
+  # Match station coordinates with observed stations only
+  obs_coords <- st_coordinates(temp_shm.sf)
+  obs_stations <- SpatialPoints(coords = obs_coords, proj4string = CRS(proj4string(grids_sp)))
+  
+  # Extract only at observed station locations
+  rk_at_obs <- sp::over(obs_stations, grids_sp)
+  
+  # Combine predictions with observations
+  rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$mh_temp)
+
+  
+  # Extract predicted values from the RK surface at station coordinates
+  #rk_at_stations <- sp::over(station_coords, grids_sp)
+  cat("Predicted rows:", nrow(rk_at_obs), "\n")
+  cat("Observed rows :", length(temp_shm.sf$mh_temp), "\n")
+  
+  # Calculate prediction error
+  rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
+  
+  # Metrics
+  rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
+  mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
+  bias <- mean(rk_eval$residual, na.rm = TRUE)
+  
+  cat("RK RMSE :", round(rmse, 2), "\n")
+  cat("RK MAE  :", round(mae, 2), "\n")
+  cat("RK Bias :", round(bias, 2), "\n")
+  
+  ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
+    geom_point() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(title = "RK Prediction Residuals at Stations",
+         x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)")
 }
 
+# Save all LM metrics to a single CSV file
+metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
+write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
 
-# CONTINUE HERE WITH WRITING THE CODE FOR THE KRIGING PART AND THE RESULTS EVALUATION
 ```
 
 WORKS WITH EMPTY RESULTS FOR THE PLOTS AND WEIRD KRIGING OUTPUTS
