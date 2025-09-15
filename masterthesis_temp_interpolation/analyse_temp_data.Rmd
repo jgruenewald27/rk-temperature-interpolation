@@ -163,15 +163,14 @@ ggplot(station_data, aes(x = dateobserved, y = temperature)) +
 
 This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
 
-
 ```{r Test plot}
 
 # Check how the plot looks before looping and saving it
-ggplot(temp_hm, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +
+ggplot(temp_clean, aes(x = dateobserved, y = temperature, color = stationname, group = stationname)) +
     geom_line() +
     geom_point(size = 1) +
     labs(
-      title = paste("Hourly Mean Temperature -", basename(file)),
+      title = paste("Mean Temperature"),
       x = "Timestamp", y = "Mean Temperature (°C)"
     ) +
     theme_minimal(base_size = 12) +
@@ -180,6 +179,36 @@ ggplot(temp_hm, aes(x = hour, y = mh_temp, color = stationname, group = stationn
       legend.position = "none"
     )
 ```
+
+LOOP IS CURRENTLY NOT RUNNING WHEN TRYING TO CREATE PLOTS WITH SMOOTH LINES
+CONTINUE WORKING HERE
+
+```{r Create plots for each station for temp measurements 2023}
+yr    <- max(year(temp_clean$dateobserved), na.rm = TRUE)
+x_min <- ymd_hms(sprintf("%d-01-01 00:00:00", yr), tz = "Europe/Berlin")
+x_max <- ymd_hms(sprintf("%d-12-31 23:59:59", yr), tz = "Europe/Berlin")
+
+stations <- sort(unique(temp_clean$stationname))
+for (st in stations) {
+  gdat <- temp_clean %>%
+    filter(stationname == st, year(dateobserved) == yr) %>%
+    arrange(dateobserved)
+
+  p <- ggplot(gdat, aes(x = dateobserved, y = temperature)) +
+    geom_line(linewidth = 0.3, alpha = 0.9, lineend = "round") +
+    labs(title = paste("Temperature Measurements 2023 —", st, yr),
+         x = "Month", y = "Temperature (°C)") +
+    scale_x_datetime(breaks = date_breaks("1 month"),
+                     labels = label_date("%b"),
+                     limits = c(x_min, x_max),
+                     expand = expansion(mult = c(0, 0))) +
+    theme_minimal(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none")
+  print(p)
+}
+```
+
 
 --------------------------------------------------------------------------------
 
