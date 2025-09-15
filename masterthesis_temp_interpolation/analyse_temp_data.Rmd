@@ -52,6 +52,9 @@ temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
 # Removes rows where temp is NA
 temp <- temp %>% filter(!is.na(temperature))
 
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
 # Drop all May 2023 data for this station as the measurements are completely off starting in May
 temp <- temp %>%
   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
@@ -74,6 +77,13 @@ temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
 # temp_hm <- temp_clean %>%
 #   group_by(stationname, dateobserved, chour) %>%
 #   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
+
+# # Calculate mean temperature for each station and hour during any given month
+# temp_hm <- temp %>%
+#   filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
+#   group_by(stationname, chour) %>%                # Group by station and hour
+#   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+#   mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 ```
 
 ```{r Check temperature distribution using bins of 5°C}
@@ -125,105 +135,17 @@ p
 ```
 
 ```{r}
-ggplot(
-  temp_clean,
-  aes(x = as.Date(chour), y = temperature)   # still raw values, just a Date x-axis
-) +
-  geom_smooth(
-    se = FALSE,
-    method = "gam",
-    formula = y ~ s(x, bs = "cs", k = 12),  # smooth through the year; raise k for wigglier curves
-    linewidth = 0.7
-  ) +
-  facet_wrap(~ entity_id, ncol = 6, scales = "free_y") +  # 5x6 or 6x5 grid for ~30 stations
-  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
-  labs(
-    title = "Seasonal temperature trend — raw measurements (2023)",
-    x = NULL, y = "Temperature (°C)"
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    panel.grid.minor = element_blank(),
-    strip.text = element_text(size = 9),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
+
 ```
 
 ```{r}
-# ----------------- SETTINGS -----------------
-target_year  <- 2023
-tz_local     <- "Europe/Berlin"
-k_annual     <- 24      # wiggliness of the annual smooth (higher = wigglier)
-facet_ncol   <- 6       # ~30 stations => 5x6 or 6x5 layout
-fixed_scales <- TRUE    # set FALSE for per-panel y-scale
-# --------------------------------------------
 
-# Detect columns
-time_col <- if ("dateobserved" %in% names(temp_clean)) {
-  "dateobserved"
-} else if ("timestamp" %in% names(temp_clean)) {
-  "timestamp"
-} else {
-  stop("No datetime column found. Expected 'dateobserved' or 'timestamp'.")
-}
-has_chour <- "chour" %in% names(temp_clean)
-
-# Month ticks for x-axis
-month_ticks  <- yday(ymd(paste0(target_year, "-", 1:12, "-01")))
-month_labels <- month.abb
-
-# Prepare data: local time, day-of-year, hour-of-day; keep target year; drop non-finite
-temp_year <- temp_clean %>%
-  mutate(
-    ts   = with_tz(as.POSIXct(.data[[time_col]], tz = "UTC"), tz_local),
-    doy  = yday(ts),                                # 1..366
-    hod  = if (has_chour) as.integer(chour) else hour(ts)  # 0..23
-  ) %>%
-  filter(year(ts) == target_year,
-         is.finite(temperature), is.finite(doy), is.finite(hod)) %>%
-  group_by(entity_id) %>%
-  filter(dplyr::n_distinct(doy) >= 10) %>%          # ensure enough x-points per station
-  ungroup()
-
-# Plot: smoothed line per station (no raw points)
-ggplot(temp_year, aes(x = doy, y = temperature)) +
-  geom_smooth(
-    se = FALSE,
-    method = mgcv::gam,
-    # Annual seasonality (x=doy) + daily cycle (hod), both cyclic
-    formula = y ~ s(x, bs = "cc", k = k_annual) + s(hod, bs = "cc", k = 24),
-    method.args = list(knots = list(x = c(1, 366), hod = c(0, 24))),
-    linewidth = 0.9,
-    n = 200,
-    na.rm = TRUE
-  ) +
-  facet_wrap(
-    ~ entity_id,
-    ncol   = facet_ncol,
-    scales = if (fixed_scales) "fixed" else "free_y"
-  ) +
-  scale_x_continuous(
-    breaks = month_ticks, labels = month_labels,
-    expand = expansion(mult = c(0.01, 0.01))
-  ) +
-  labs(
-    title = sprintf("Seasonal temperature trend (smoothed) — %s", target_year),
-    subtitle = "Cyclic GAM on raw measurements (annual + hourly effects)",
-    x = NULL,
-    y = "Temperature (°C)"
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    strip.text = element_text(size = 9)
-  )
 ```
-
 
 --------------------------------------------------------------------------------
 
 Check specific measurement station for outliers
+To run this code successfully and really display the outliers the data needs to be imported again
 ```{r}
 station_data <- subset(temp, stationname == "MeteoHelix_09_Neuenheim_Bürgeramt")
 
@@ -241,129 +163,6 @@ ggplot(station_data, aes(x = dateobserved, y = temperature)) +
 
 This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
 
-```{r}
-# Ensure time column is POSIXct and create an hourly index (Berlin local)
-tz_berlin <- "Europe/Berlin"
-temp <- temp %>%
-  mutate(
-    dateobserved = as.POSIXct(dateobserved, tz = tz_berlin),
-    hour_local   = floor_date(dateobserved, "hour")
-  )
-
-# ---- Parameters (tune to your data) ----
-window_days       <- 3            # +/- window in days for rolling comparisons
-win               <- window_days * 24
-z_thresh_temporal <- 6            # robust z over rolling window
-z_thresh_rate     <- 8            # robust z for first-difference
-z_thresh_network  <- 6            # deviation from network at same hour
-
-# Helper to avoid divide-by-zero when MAD=0
-safe_div <- function(num, den, eps = 0.1) num / pmax(den, eps)
-
-# ---- 1) Station-wise temporal plausibility (rolling median + MAD) ----
-temp1 <- temp %>%
-  arrange(stationname, hour_local) %>%
-  group_by(stationname) %>%
-  mutate(
-    med_roll = slide_dbl(temperature, median,
-                         .before = win, .after = win, na.rm = TRUE),
-    mad_roll = slide_dbl(temperature,
-                         ~ mad(.x, constant = 1.4826, na.rm = TRUE),
-                         .before = win, .after = win),
-    z_temporal = safe_div(abs(temperature - med_roll), mad_roll),
-
-    # Rate-of-change check (compare differences to rolling median/MAD of diffs)
-    dtemp   = temperature - dplyr::lag(temperature),
-    d_med   = slide_dbl(dtemp, median,
-                        .before = win, .after = win, na.rm = TRUE),
-    d_mad   = slide_dbl(dtemp,
-                        ~ mad(.x, constant = 1.4826, na.rm = TRUE),
-                        .before = win, .after = win),
-    z_rate  = safe_div(abs(dtemp - d_med), d_mad)
-  ) %>%
-  ungroup()
-
-# ---- 2) (Optional) Network plausibility: compare to other stations at same hour ----
-temp2 <- temp1 %>%
-  group_by(hour_local) %>%
-  mutate(
-    net_med = median(temperature, na.rm = TRUE),
-    net_mad = mad(temperature, constant = 1.4826, na.rm = TRUE),
-    z_network = safe_div(abs(temperature - net_med), net_mad)
-  ) %>%
-  ungroup()
-
-# ---- 3) Combine to a plausibility score + outlier flag (no hard caps) ----
-temp_flagged <- temp2 %>%
-  mutate(
-    plausibility_score = pmax(z_temporal, z_rate, z_network, na.rm = TRUE),
-    outlier = (z_temporal > z_thresh_temporal) |
-              (z_rate     > z_thresh_rate)     |
-              (z_network  > z_thresh_network)
-  )
-
-# Peek at the worst offenders
-temp_flagged %>%
-  arrange(desc(plausibility_score)) %>%
-  select(stationname, dateobserved, temperature, z_temporal, z_rate, z_network, plausibility_score) %>%
-  head()
-
-# ---- 4) Filter if you want a “clean” dataset (keeps sf geometry) ----
-temp_clean <- temp_flagged %>% filter(!outlier)
-
-# Example: recompute your 10 °C bin counts on cleaned data
-tmin   <- floor(min(temp_clean$temperature, na.rm = TRUE) / 10) * 10
-tmax   <- ceiling(max(temp_clean$temperature, na.rm = TRUE) / 10) * 10
-breaks <- seq(tmin, tmax, by = 10)
-labs   <- sprintf("%d to %d", breaks[-length(breaks)], breaks[-1])
-
-library(tidyr)
-counts_10C_clean <- temp_clean %>%
-  transmute(bin = cut(temperature, breaks = breaks, labels = labs,
-                      right = FALSE, include_lowest = TRUE)) %>%
-  count(bin, name = "n") %>%
-  complete(bin = labs, fill = list(n = 0)) %>%
-  mutate(pct = n / sum(n), cum_pct = cumsum(pct))
-
-counts_10C_clean
-
-```
-
-
-```{r Load and preprocess temp data}
-
-# Read temperature data
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
-
-min(temp$temperature, na.rm = TRUE)
-max(temp$temperature, na.rm = TRUE)
-
-# Removes rows where temp is NA
-temp <- temp[!is.na(temp$temperature), ] 
-
-# Reproject the data for Germany
-temp <- st_transform(temp, crs="EPSG:32632")
-
-# Ensure dateobserved is in the correct date-time format with German timezone
-temp <- temp %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
-
-# Calculate hour count since epoch, rounded down to current hour
-temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
-
-# Test the results
-print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
-```
-
-```{r Calculate hourly means for each unique stations for the month of July}
-
-# Calculate mean temperature for each station and hour during July
-temp_hm <- temp %>%
-  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
-  group_by(stationname, chour) %>%                # Group by station and hour
-  summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
-  mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
-```
 
 ```{r Test plot}
 
