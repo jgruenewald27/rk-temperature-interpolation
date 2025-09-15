@@ -15,36 +15,14 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 # Load Required Libraries
 
-# Spatial Data Handling & Processing
-library(sf)
-library(sp)
-library(terra)
-library(raster)
-library(stars)
-library(spdep)
+packages <- c("knitr", "tidyverse", "dplyr", "ggplot2", "sf", "sp", "raster", "terra", 
+              "stars", "tmap", "gstat", "spdep", "spatialreg", "spatstat", "automap", 
+              "nlme",  "scales", "caTools", "randomForest", "corrplot", "mgcv", "moments",
+              "gridExtra", "lattice", "OpenStreetMap")
 
-# Spatial Analysis & Interpolation
-library(gstat)
-library(randomForest)
-library(nlme)
-library(automap)
-library(mgcv)
-library(caTools)
-
-# Data Manipulation & Wrangling
-library(tidyverse)
-
-# Data Visualization
-library(ggplot2)
-library(scales)
-library(gridExtra)
-
-# Mapping & Interactive Visualization
-library(tmap)
-
-# Additional
-library(lattice)
+install.packages(setdiff(packages, rownames(installed.packages())))
 ```
+
 
 ------------------------------------------------------------------------
 
