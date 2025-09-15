@@ -37,7 +37,7 @@ library(scales)
 library(gridExtra)
 
 # Mapping & Interactive Visualization
-#library(tmap)
+library(tmap)
 
 # Additional
 library(lattice)
@@ -55,7 +55,7 @@ library(lattice)
 tz_berlin <- "Europe/Berlin"
 
 # Read temperature data
-temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230105_31days.gpkg')
 
 # Removes rows where temp is NA
 temp <- temp[!is.na(temp$temperature), ] 
@@ -180,7 +180,7 @@ proj4string(station_coords) <- CRS(proj4string(grids_sp))
 --------------------------------------------------------------------------------
 
 ```{r create_output_folder}
-output_dir <- "../rk_results"
+output_dir <- "../rk_results_testweek"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Define subdirectories for specific output types
@@ -207,7 +207,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # ================================================
 
 # Get unique timestamps
-timestamps <- unique(temp_hm$chour)[1:3]  # Test with first 3 unique chour timestamps
+timestamps <- unique(temp_hm$chour)[1:168]  # Test with first 3 unique chour timestamps
 
 # Counters + progress bar
 total     <- length(timestamps)                       
