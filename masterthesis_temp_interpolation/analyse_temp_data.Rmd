@@ -1,0 +1,601 @@
+---
+title: "Explorative analysis of the temperature data"
+author: "Johannes Gruenewald"
+date: "2024-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(caTools)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+library(xgboost)
+library(caret)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(magrittr)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+
+# Mapping & Interactive Visualization
+library(mapview)
+library(tmap)
+```
+
+--------------------------------------------------------------------------------
+
+```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# Drop all May 2023 data for this station as the measurements are completely off starting in May
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  filter(
+    !(entity_id == "hd:DE_Heidelberg_69120_34:WeatherObserved" &
+      year(with_tz(dateobserved, "Europe/Berlin")) == 2023 &
+      month(with_tz(dateobserved, "Europe/Berlin")) == 5)
+  )
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Calculate hour count since epoch, rounded down to current hour
+temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+
+# MAYBE CALCULATE THIS LATER AND SAFE THE OUTPUT THAT I HAVE A DATASET WITH
+# HOURLY MEANS FOR THE ENTIRE YEAR OF 2023
+# Calculate mean temperature for each station and hour during July using local hour
+# temp_hm <- temp_clean %>%
+#   group_by(stationname, dateobserved, chour) %>%
+#   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
+```
+
+```{r Check temperature distribution using bins of 5°C}
+
+# Build global 5 °C breaks from the cleaned data (rounded outward)
+tmin_clean <- floor(min(temp_clean$temperature, na.rm = TRUE) / 5) * 5
+tmax_clean <- ceiling(max(temp_clean$temperature, na.rm = TRUE) / 5) * 5
+breaks     <- seq(tmin_clean, tmax_clean, by = 5)
+
+# Add clean labels
+labs <- sprintf("%d to %d", breaks[-length(breaks)], breaks[-1])
+
+# Bin + count, DROP GEOMETRY to avoid sfc column
+counts_5C_clean <- temp_clean %>%
+  sf::st_drop_geometry() %>%
+  transmute(bin = cut(temperature,
+                      breaks = breaks,
+                      labels = labs,
+                      right = FALSE,      
+                      include_lowest = TRUE,
+                      ordered_result = TRUE)) %>%
+  filter(!is.na(bin)) %>%
+  count(bin, name = "n") %>%
+  tidyr::complete(bin = factor(labs, levels = labs, ordered = TRUE), fill = list(n = 0L)) %>% 
+  mutate(pct = n / sum(n), cum_pct = cumsum(pct))
+
+# Temperature distribution using 5°C bins for the year of 2023
+p <- ggplot(counts_5C_clean, aes(x = bin, y = n)) +
+  geom_col(fill = "steelblue", color = "black", alpha = 0.7) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(labels = scales::label_number(big.mark = ",", accuracy = 1)) +
+  labs(title = "Temperature Distribution — Heidelberg (2023, 5°C bins)",
+       x = "Temperature bin (°C)", y = "Count",
+       caption = "Source: Pre-processed sensor data") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p
+
+# # File name of the output
+# fn_base <- sprintf("temperature_distribution_Heidelberg_2023_5C_%s",
+#                    format(Sys.Date(), "%Y%m%d"))
+# 
+# # Save PNG
+# ggsave(
+#   filename = file.path("../plots", paste0(fn_base, ".png")),
+#   plot = p, width = 10, height = 6, units = "in", dpi = 300
+# )
+```
+
+```{r}
+ggplot(
+  temp_clean,
+  aes(x = as.Date(chour), y = temperature)   # still raw values, just a Date x-axis
+) +
+  geom_smooth(
+    se = FALSE,
+    method = "gam",
+    formula = y ~ s(x, bs = "cs", k = 12),  # smooth through the year; raise k for wigglier curves
+    linewidth = 0.7
+  ) +
+  facet_wrap(~ entity_id, ncol = 6, scales = "free_y") +  # 5x6 or 6x5 grid for ~30 stations
+  scale_x_date(date_breaks = "2 months", date_labels = "%b") +
+  labs(
+    title = "Seasonal temperature trend — raw measurements (2023)",
+    x = NULL, y = "Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r}
+# ----------------- SETTINGS -----------------
+target_year  <- 2023
+tz_local     <- "Europe/Berlin"
+k_annual     <- 24      # wiggliness of the annual smooth (higher = wigglier)
+facet_ncol   <- 6       # ~30 stations => 5x6 or 6x5 layout
+fixed_scales <- TRUE    # set FALSE for per-panel y-scale
+# --------------------------------------------
+
+# Detect columns
+time_col <- if ("dateobserved" %in% names(temp_clean)) {
+  "dateobserved"
+} else if ("timestamp" %in% names(temp_clean)) {
+  "timestamp"
+} else {
+  stop("No datetime column found. Expected 'dateobserved' or 'timestamp'.")
+}
+has_chour <- "chour" %in% names(temp_clean)
+
+# Month ticks for x-axis
+month_ticks  <- yday(ymd(paste0(target_year, "-", 1:12, "-01")))
+month_labels <- month.abb
+
+# Prepare data: local time, day-of-year, hour-of-day; keep target year; drop non-finite
+temp_year <- temp_clean %>%
+  mutate(
+    ts   = with_tz(as.POSIXct(.data[[time_col]], tz = "UTC"), tz_local),
+    doy  = yday(ts),                                # 1..366
+    hod  = if (has_chour) as.integer(chour) else hour(ts)  # 0..23
+  ) %>%
+  filter(year(ts) == target_year,
+         is.finite(temperature), is.finite(doy), is.finite(hod)) %>%
+  group_by(entity_id) %>%
+  filter(dplyr::n_distinct(doy) >= 10) %>%          # ensure enough x-points per station
+  ungroup()
+
+# Plot: smoothed line per station (no raw points)
+ggplot(temp_year, aes(x = doy, y = temperature)) +
+  geom_smooth(
+    se = FALSE,
+    method = mgcv::gam,
+    # Annual seasonality (x=doy) + daily cycle (hod), both cyclic
+    formula = y ~ s(x, bs = "cc", k = k_annual) + s(hod, bs = "cc", k = 24),
+    method.args = list(knots = list(x = c(1, 366), hod = c(0, 24))),
+    linewidth = 0.9,
+    n = 200,
+    na.rm = TRUE
+  ) +
+  facet_wrap(
+    ~ entity_id,
+    ncol   = facet_ncol,
+    scales = if (fixed_scales) "fixed" else "free_y"
+  ) +
+  scale_x_continuous(
+    breaks = month_ticks, labels = month_labels,
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  labs(
+    title = sprintf("Seasonal temperature trend (smoothed) — %s", target_year),
+    subtitle = "Cyclic GAM on raw measurements (annual + hourly effects)",
+    x = NULL,
+    y = "Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 9)
+  )
+```
+
+
+--------------------------------------------------------------------------------
+
+Check specific measurement station for outliers
+```{r}
+station_data <- subset(temp, stationname == "MeteoHelix_09_Neuenheim_Bürgeramt")
+
+
+# Plot temperature over time
+ggplot(station_data, aes(x = dateobserved, y = temperature)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Temperature at station MeteoHelix_09_Neuenheim_Bürgeramt\nInactive since May 8, 2023",
+    x = "Time",
+    y = "Temperature (°C)"
+  ) +
+  theme_minimal()
+```
+
+This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
+
+```{r}
+# Ensure time column is POSIXct and create an hourly index (Berlin local)
+tz_berlin <- "Europe/Berlin"
+temp <- temp %>%
+  mutate(
+    dateobserved = as.POSIXct(dateobserved, tz = tz_berlin),
+    hour_local   = floor_date(dateobserved, "hour")
+  )
+
+# ---- Parameters (tune to your data) ----
+window_days       <- 3            # +/- window in days for rolling comparisons
+win               <- window_days * 24
+z_thresh_temporal <- 6            # robust z over rolling window
+z_thresh_rate     <- 8            # robust z for first-difference
+z_thresh_network  <- 6            # deviation from network at same hour
+
+# Helper to avoid divide-by-zero when MAD=0
+safe_div <- function(num, den, eps = 0.1) num / pmax(den, eps)
+
+# ---- 1) Station-wise temporal plausibility (rolling median + MAD) ----
+temp1 <- temp %>%
+  arrange(stationname, hour_local) %>%
+  group_by(stationname) %>%
+  mutate(
+    med_roll = slide_dbl(temperature, median,
+                         .before = win, .after = win, na.rm = TRUE),
+    mad_roll = slide_dbl(temperature,
+                         ~ mad(.x, constant = 1.4826, na.rm = TRUE),
+                         .before = win, .after = win),
+    z_temporal = safe_div(abs(temperature - med_roll), mad_roll),
+
+    # Rate-of-change check (compare differences to rolling median/MAD of diffs)
+    dtemp   = temperature - dplyr::lag(temperature),
+    d_med   = slide_dbl(dtemp, median,
+                        .before = win, .after = win, na.rm = TRUE),
+    d_mad   = slide_dbl(dtemp,
+                        ~ mad(.x, constant = 1.4826, na.rm = TRUE),
+                        .before = win, .after = win),
+    z_rate  = safe_div(abs(dtemp - d_med), d_mad)
+  ) %>%
+  ungroup()
+
+# ---- 2) (Optional) Network plausibility: compare to other stations at same hour ----
+temp2 <- temp1 %>%
+  group_by(hour_local) %>%
+  mutate(
+    net_med = median(temperature, na.rm = TRUE),
+    net_mad = mad(temperature, constant = 1.4826, na.rm = TRUE),
+    z_network = safe_div(abs(temperature - net_med), net_mad)
+  ) %>%
+  ungroup()
+
+# ---- 3) Combine to a plausibility score + outlier flag (no hard caps) ----
+temp_flagged <- temp2 %>%
+  mutate(
+    plausibility_score = pmax(z_temporal, z_rate, z_network, na.rm = TRUE),
+    outlier = (z_temporal > z_thresh_temporal) |
+              (z_rate     > z_thresh_rate)     |
+              (z_network  > z_thresh_network)
+  )
+
+# Peek at the worst offenders
+temp_flagged %>%
+  arrange(desc(plausibility_score)) %>%
+  select(stationname, dateobserved, temperature, z_temporal, z_rate, z_network, plausibility_score) %>%
+  head()
+
+# ---- 4) Filter if you want a “clean” dataset (keeps sf geometry) ----
+temp_clean <- temp_flagged %>% filter(!outlier)
+
+# Example: recompute your 10 °C bin counts on cleaned data
+tmin   <- floor(min(temp_clean$temperature, na.rm = TRUE) / 10) * 10
+tmax   <- ceiling(max(temp_clean$temperature, na.rm = TRUE) / 10) * 10
+breaks <- seq(tmin, tmax, by = 10)
+labs   <- sprintf("%d to %d", breaks[-length(breaks)], breaks[-1])
+
+library(tidyr)
+counts_10C_clean <- temp_clean %>%
+  transmute(bin = cut(temperature, breaks = breaks, labels = labs,
+                      right = FALSE, include_lowest = TRUE)) %>%
+  count(bin, name = "n") %>%
+  complete(bin = labs, fill = list(n = 0)) %>%
+  mutate(pct = n / sum(n), cum_pct = cumsum(pct))
+
+counts_10C_clean
+
+```
+
+
+```{r Load and preprocess temp data}
+
+# Read temperature data
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+min(temp$temperature, na.rm = TRUE)
+max(temp$temperature, na.rm = TRUE)
+
+# Removes rows where temp is NA
+temp <- temp[!is.na(temp$temperature), ] 
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Ensure dateobserved is in the correct date-time format with German timezone
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, format="%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
+
+# Calculate hour count since epoch, rounded down to current hour
+temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+
+# Test the results
+print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
+```
+
+```{r Calculate hourly means for each unique stations for the month of July}
+
+# Calculate mean temperature for each station and hour during July
+temp_hm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
+  group_by(stationname, chour) %>%                # Group by station and hour
+  summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+  mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+```
+
+```{r Test plot}
+
+# Check how the plot looks before looping and saving it
+ggplot(temp_hm, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +
+    geom_line() +
+    geom_point(size = 1) +
+    labs(
+      title = paste("Hourly Mean Temperature -", basename(file)),
+      x = "Timestamp", y = "Mean Temperature (°C)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+```
+
+--------------------------------------------------------------------------------
+
+Analyse temperate data for the entire year of 2023
+Each plot will include the temperature information over time 
+
+Loop through all the months
+
+```{r Loop through months to compute hourly mean temperatures and generate time series plots per station.}
+# Define your input folder
+input_folder <- "../data/temp_HD"
+output_folder <- "../temp_timeseries"
+dir.create(output_folder, showWarnings = FALSE)
+
+# List all .gpkg files
+gpkg_files <- list.files(input_folder, pattern = "\\.gpkg$", full.names = TRUE)
+
+# Create an empty list to store results
+all_temp_hm <- list()
+
+# Loop through each .gpkg file
+for (file in gpkg_files) {
+  cat("\nProcessing:", basename(file), "\n")
+
+  # ---- Load and preprocess temp data ----
+  temp <- sf::read_sf(file)
+  temp <- temp[!is.na(temp$temperature), ]
+  temp <- st_transform(temp, crs = "EPSG:32632")
+
+  temp <- temp %>%
+    mutate(dateobserved = as.POSIXct(dateobserved, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"))
+
+  temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+
+  # ---- Calculate hourly means for July ----
+  temp_hm <- temp %>%
+    group_by(stationname, chour) %>%
+    summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+
+  # Store result in list
+  all_temp_hm[[basename(file)]] <- temp_hm
+
+  # ---- Create and save plot ----
+  plot_name <- sub("\\.gpkg$", ".png", basename(file))
+  plot_path <- file.path(output_folder, plot_name)
+
+  p <- ggplot(temp_hm, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +
+    geom_line() +
+    geom_point(size = 1) +
+    labs(
+      title = paste("Hourly Mean Temperature -", basename(file)),
+      x = "Timestamp", y = "Mean Temperature (°C)"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    )
+
+  ggsave(plot_path, plot = p, width = 10, height = 6, dpi = 300)
+}
+```
+
+--------------------------------------------------------------------------------
+
+Calculate monthly mean temperature and standard deviation for the year of 2023
+
+```{r monthly temp stats 2023}
+# Define input and output folders
+input_folder <- "../data/temp_HD"
+output_folder <- "../monthly_summary_temp"
+dir.create(output_folder, showWarnings = FALSE)
+
+# List all .gpkg files
+gpkg_files <- list.files(input_folder, pattern = "\\.gpkg$", full.names = TRUE)
+
+# Create an empty list to store monthly summaries
+monthly_stats_all <- list()
+
+# Loop through each .gpkg file
+for (file in gpkg_files) {
+  cat("\nProcessing:", basename(file), "\n")
+
+  # ---- Load and preprocess temp data ----
+  temp <- sf::read_sf(file)
+  temp <- temp[!is.na(temp$temperature), ]
+  temp <- st_transform(temp, crs = "EPSG:32632")
+
+  temp <- temp %>%
+    mutate(dateobserved = as.POSIXct(dateobserved, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin")) %>%
+    filter(year(dateobserved) == 2023) %>%
+    mutate(month = month(dateobserved, label = TRUE, abbr = TRUE))
+
+  # ---- Monthly statistics: mean, SD, min, max ----
+  monthly_stats <- temp %>%
+    group_by(month) %>%
+    summarise(
+      mean_temp = mean(temperature, na.rm = TRUE),
+      sd_temp   = sd(temperature, na.rm = TRUE),
+      min_temp  = min(temperature, na.rm = TRUE),
+      max_temp  = max(temperature, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(source = basename(file))
+
+  # Store result
+  monthly_stats_all[[basename(file)]] <- monthly_stats
+
+  # Save as CSV
+  out_csv <- file.path(output_folder, paste0(tools::file_path_sans_ext(basename(file)), "_monthly_stats_2023.csv"))
+  write.csv(monthly_stats, out_csv, row.names = FALSE)
+}
+
+# ---- Combine all into one summary table ----
+combined_stats <- bind_rows(monthly_stats_all)
+
+# Save combined table
+write.csv(combined_stats, file.path(output_folder, "combined_monthly_stats_2023.csv"), row.names = FALSE)
+```
+
+```{r plot monthly mean temp and std}
+ggplot(combined_stats, aes(x = month, y = mean_temp, group = source, color = source)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(
+    title = "Monthly Mean Temperatures (2023)",
+    x = "Month", y = "Mean Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+ggplot(combined_stats, aes(x = month, y = sd_temp, group = source, color = source)) +
+  geom_line() +
+  geom_point(size = 3) +
+  labs(
+    title = "Monthly Temperature Standard Deviation (2023)",
+    x = "Month", y = "Standard Deviation (°C)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+#ggsave(file.path(output_folder, "monthly_mean_temperatures_2023.png"), width = 10, height = 5, dpi = 300)
+```
+
+```{r}
+combined_stats
+```
+
+--------------------------------------------------------------------------------
+
+Calculate mean temperature for each measurement station for the month of July
+
+```{r}
+# Calculate the mean temperature for each station in July
+temp_mm <- temp %>%
+  filter(format(dateobserved, "%m") == "07") %>%
+  group_by(stationname) %>%
+  summarise(monthly_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")
+```
+
+```{r}
+ggplot(temp_mm, aes(x = reorder(stationname, monthly_mean_temperature), 
+                    y = monthly_mean_temperature)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +  # Flips axes for better readability
+  labs(
+    title = "Mean Temperature in July by Station",
+    x = "Station",
+    y = "Mean Temperature (°C)"
+  ) +
+  theme_minimal()
+```
+
+--------------------------------------------------------------------------------
+
+Calculate Spearman
+Explanation why I chose Spearman:
+- Pearson’s correlation assumes both normality and linearity in the relationship between X and Y. 
+- Spearman’s correlation has less stringent assumptions, assuming only that the relationship is monotonic. This means that the relationship has to be consistently increasing or decreasing, but that it does not have to do so in a linear manner (see left). 
+- Spearman’s correlation also performs better than Pearson’s correlation in instances where there are outliers or very few data point -> this is the case for my data.
+
+```{r}
+
+
+```{r}
+cor.test(temp_mm$elevation, temp_mm$monthly_mean_temperature, method = "spearman")
+
+cor.test(temp_mm$tree_canopy_height, temp_mm$monthly_mean_temperature, method = "spearman")
+
+cor.test(temp_mm$building_height, temp_mm$monthly_mean_temperature, method = "spearman")
+```
+
+Spearman’s test is non-parametric and based on ranking the values. It assumes that all values are distinct so that ranks are unique. When ties occur (e.g., two identical temperatures or building heights) the exact p-value can't be computed. So for these results, p-value can't be fully trusted (elevation has a statistically significant relationship with temperature) be the correlation coefficient (rho) can still be trusted.
+It is also an influencing factor, that I only work with n=31 data points
+```
+
+
+--------------------------------------------------------------------------------
+
+COULD MAYBE BE USED IN THE FUTURE TO COMBINE ALL THE TEMP MEASUREMENTS FROM ONE 
+YEAR INTO ONE LAYER:
+
+```{r}
+# List all .gpkg files
+gpkg_files <- list.files("../data/temp_HD/", pattern = "\\.gpkg$", full.names = TRUE)
+
+# Read all files and bind them into one sf object
+all_data <- gpkg_files %>%
+  lapply(read_sf) %>%
+  bind_rows()
+
+# Write to a single layer in a new GeoPackage
+st_write(all_data, "../data/combined_temp_data.gpkg", layer = "all_temp_data", driver = "GPKG")
+
+
+temp_2023 <- sf::read_sf('../data/sensor_data_year_2023.gpkg')
+```
