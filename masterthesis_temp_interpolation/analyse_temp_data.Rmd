@@ -187,8 +187,10 @@ station_data %>%
       )
     },
     geom = "text",
+    hjust = 0.5, 
+    vjust = 0,
     aes(label = after_stat(label)),
-    vjust = 0, size = 3.6, colour = text_col
+    size = 3.6, colour = text_col
   ) +
   labs(
     title = "Monthly temperature distribution — MeteoHelix_09_Neuenheim_Bürgeramt\nInactive since May 8, 2023",
