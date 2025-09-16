@@ -147,18 +147,64 @@ p
 Check specific measurement station for outliers
 To run this code successfully and really display the outliers the data needs to be imported again
 ```{r}
-station_data <- subset(temp, stationname == "MeteoHelix_09_Neuenheim_Bürgeramt")
+# Read temperature data for the entire year of 2023
+temp_outlier <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
 
+station_data <- subset(temp_outlier, stationname == "MeteoHelix_09_Neuenheim_Bürgeramt")
 
-# Plot temperature over time
-ggplot(station_data, aes(x = dateobserved, y = temperature)) +
-  geom_line(color = "blue") +
+# Palette (adjust as you like)
+box_fill  <- "#1da1f2"
+box_line  <- "#0f4c81"
+out_color <- "#0f4c81"
+text_col  <- "#071e3d"
+
+station_data %>%
+  filter(!is.na(dateobserved), !is.na(temperature)) %>%
+  mutate(month = floor_date(dateobserved, "month")) %>%
+  ggplot(aes(x = factor(month), y = temperature)) +
+  geom_boxplot(
+    fill = box_fill, color = box_line,
+    outlier.shape = 18, outlier.size = 1.5, outlier.alpha = 1,
+    outlier.colour = out_color
+  ) +
+  # 3-line summary above each box: Count, Mean, SD
+  stat_summary(
+    fun.data = function(y) {
+      y <- y[!is.na(y)]
+      if (!length(y)) return(data.frame(y = NA, label = ""))
+      n <- length(y)
+      m <- mean(y)
+      s <- sd(y)
+      q1 <- quantile(y, 0.25)
+      q3 <- quantile(y, 0.75)
+      iqr <- q3 - q1
+      upper <- q3 + 1.5 * iqr
+      pad <- 0.2 * diff(range(y)) + 1e-9  # a little headroom
+
+      data.frame(
+        y = upper + pad,
+        label = sprintf("Count = %d\nMean = %.2f\nSD = %.2f", n, m, s)
+      )
+    },
+    geom = "text",
+    aes(label = after_stat(label)),
+    vjust = 0, size = 3.6, colour = text_col
+  ) +
   labs(
-    title = "Temperature at station MeteoHelix_09_Neuenheim_Bürgeramt\nInactive since May 8, 2023",
-    x = "Time",
+    title = "Monthly temperature distribution — MeteoHelix_09_Neuenheim_Bürgeramt\nInactive since May 8, 2023",
+    x = "Month",
     y = "Temperature (°C)"
   ) +
-  theme_minimal()
+  # nicer month labels + extra top room for the summary text
+  scale_x_discrete(labels = function(x) format(as.Date(x), "%b %Y")) +
+  scale_y_continuous(expand = expansion(mult = c(0.03, 0.18))) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+
 ```
 
 This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
