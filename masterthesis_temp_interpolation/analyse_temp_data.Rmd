@@ -80,6 +80,8 @@ temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
 #   mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 ```
 
+--------------------------------------------------------------------------------
+
 ```{r Check temperature distribution across all measurement stations}
 
 # Build daily dataset with rolling mean + ordering key from entity_id
@@ -108,16 +110,24 @@ levs <- daily %>%
 # Apply facet order to entity_id
 daily <- daily %>% mutate(entity_id = factor(entity_id, levels = levs))
 
-# Plot daily lines + 7-day smooth, faceted by ordered entity_id
-p_temp <- ggplot(daily, aes(x = date, y = tmean)) +
-  geom_line(alpha = 0.25, linewidth = 0.3) +
-  geom_line(aes(y = tmean7), linewidth = 0.6) +
+p_temp <- ggplot(daily, aes(x = date)) +
+  # map color to a label so we get a legend entry
+  geom_line(aes(y = tmean,  color = "Daily mean"),  alpha = 0.35, linewidth = 0.3) +
+  geom_line(aes(y = tmean7, color = "7-day mean"),              linewidth = 0.8) +
   facet_wrap(~ entity_id, ncol = 5, scales = "fixed") +
   scale_x_date(date_breaks = "3 months", date_labels = "%b",
                limits = as.Date(c("2023-01-01","2023-12-31"))) +
-  labs(title = "Temperature 2023 (ordered by unique sensor ID)",
-       x = NULL, y = "Temperature (°C)") +
-  theme_minimal(base_size = 11) +
+  scale_color_manual(
+    name = NULL,
+    values = c("Daily mean" = "black", "7-day mean" = "steelblue")
+  ) +
+  # make the legend lines match the thickness of the plotted lines
+  guides(color = guide_legend(override.aes = list(linewidth = c(0.8, 0.8), alpha = 1))) +
+  labs(
+    title = "2023 Temperature by Station — ordered by sensor ID",
+    x = NULL, y = "Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 10) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1),
         strip.text = element_text(face = "bold"),
@@ -132,7 +142,7 @@ p_temp
 # )
 ```
 
-
+--------------------------------------------------------------------------------
 
 ```{r Further pre-processing}
 # Drop all May 2023 data for this station as the measurements are completely off starting in May
