@@ -49,6 +49,7 @@ library(tmap)
 --------------------------------------------------------------------------------
 
 ```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
+
 # Read temperature data for the entire year of 2023
 temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
 
@@ -145,14 +146,21 @@ p_temp
 --------------------------------------------------------------------------------
 
 ```{r Further pre-processing}
-# Drop all May 2023 data for this station as the measurements are completely off starting in May
-temp <- temp %>%
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
-  filter(
-    !(entity_id == "hd:DE_Heidelberg_69120_34:WeatherObserved" &
-      year(with_tz(dateobserved, "Europe/Berlin")) == 2023 &
-      month(with_tz(dateobserved, "Europe/Berlin")) == 5)
-  )
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Check if exactly 4 stations were dropped
+length(unique(na.omit(temp_clean$entity_id)))
+length(unique(na.omit(temp_clean_station$entity_id)))
+
 ```
 
 
