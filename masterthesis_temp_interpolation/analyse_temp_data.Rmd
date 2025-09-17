@@ -32,6 +32,9 @@ library(tidyverse)
 library(dplyr)
 library(tidyr)
 library(magrittr)
+library(lubridate)
+library(slider)
+library(stringr)
 
 # Data Visualization
 library(ggplot2)
@@ -55,15 +58,6 @@ temp <- temp %>% filter(!is.na(temperature))
 # Reproject the data for Germany
 temp <- st_transform(temp, crs="EPSG:32632")
 
-# Drop all May 2023 data for this station as the measurements are completely off starting in May
-temp <- temp %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
-  filter(
-    !(entity_id == "hd:DE_Heidelberg_69120_34:WeatherObserved" &
-      year(with_tz(dateobserved, "Europe/Berlin")) == 2023 &
-      month(with_tz(dateobserved, "Europe/Berlin")) == 5)
-  )
-
 # Clean the data from outliers -> currently working with hard, manual breaks
 # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
 temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
@@ -85,6 +79,72 @@ temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
 #   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
 #   mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 ```
+
+```{r Check temperature distribution across all measurement stations}
+
+# Build daily dataset with rolling mean + ordering key from entity_id
+daily <- temp_clean %>%
+  st_drop_geometry() %>%
+  filter(!is.na(dateobserved), !is.na(temperature), !is.na(entity_id)) %>%
+  mutate(date = as.Date(dateobserved),
+         year = lubridate::year(date)) %>%
+  filter(year == 2023) %>%
+  # pull the number after the last "_" and before ":" (e.g., "…_6:…")
+  mutate(order_key = as.integer(str_extract(entity_id, "(?<=_)\\d+(?=:)"))) %>%
+  group_by(entity_id, date) %>%
+  summarise(tmean = mean(temperature), order_key = first(order_key), .groups = "drop") %>%
+  arrange(order_key, date) %>%
+  group_by(entity_id) %>%
+  mutate(tmean7 = slider::slide_dbl(tmean, ~mean(.x, na.rm = TRUE),
+                                    .before = 3, .after = 3)) %>%
+  ungroup()
+
+# Build facet order (levels) from the extracted order_key
+levs <- daily %>%
+  distinct(entity_id, order_key) %>%
+  arrange(order_key, entity_id) %>%
+  pull(entity_id)
+
+# Apply facet order to entity_id
+daily <- daily %>% mutate(entity_id = factor(entity_id, levels = levs))
+
+# Plot daily lines + 7-day smooth, faceted by ordered entity_id
+p_temp <- ggplot(daily, aes(x = date, y = tmean)) +
+  geom_line(alpha = 0.25, linewidth = 0.3) +
+  geom_line(aes(y = tmean7), linewidth = 0.6) +
+  facet_wrap(~ entity_id, ncol = 5, scales = "fixed") +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b",
+               limits = as.Date(c("2023-01-01","2023-12-31"))) +
+  labs(title = "Temperature 2023 (ordered by unique sensor ID)",
+       x = NULL, y = "Temperature (°C)") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text = element_text(face = "bold"),
+        plot.title = element_text(size = 16, face = "bold"))
+
+p_temp
+
+# Save the figure
+# ggsave(
+#   filename = file.path("../plots", paste0("temperature_distribution_all_stations_2023", ".png")),
+#   plot = p_temp, width = 10, height = 6, units = "in", dpi = 300
+# )
+```
+
+
+
+```{r Further pre-processing}
+# Drop all May 2023 data for this station as the measurements are completely off starting in May
+temp <- temp %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  filter(
+    !(entity_id == "hd:DE_Heidelberg_69120_34:WeatherObserved" &
+      year(with_tz(dateobserved, "Europe/Berlin")) == 2023 &
+      month(with_tz(dateobserved, "Europe/Berlin")) == 5)
+  )
+```
+
 
 ```{r Check temperature distribution using bins of 5°C}
 
@@ -158,7 +218,7 @@ p_outlier <- station_data %>%
     geom = "text", hjust = 0.5, vjust = -0.8,
     aes(label = after_stat(label)), size = 2.6, colour = text_col
   ) +
-  labs(title = "Monthly temperature distribution for station\nMeteoHelix_09_Neuenheim_Bürgeramt (Inactive since May 8, 2023)",
+  labs(title = "Monthly temperature distribution for station\nhd:DE_Heidelberg_69120_34:WeatherObserved (Inactive since May 8, 2023)",
        x = "Month", y = "Temperature (°C)") +
   scale_x_discrete(labels = function(x) format(as.Date(x), "%b %Y")) +
   scale_y_continuous(expand = expansion(mult = c(0.03, 0.18))) +
@@ -178,22 +238,14 @@ ggsave(
 
 This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
 
-```{r Test plot}
 
-# Check how the plot looks before looping and saving it
-ggplot(temp_clean, aes(x = dateobserved, y = temperature, color = stationname, group = stationname)) +
-    geom_line() +
-    geom_point(size = 1) +
-    labs(
-      title = paste("Mean Temperature"),
-      x = "Timestamp", y = "Mean Temperature (°C)"
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.position = "none"
-    )
+
+```{r}
+
+
+
 ```
+
 
 LOOP IS CURRENTLY NOT RUNNING WHEN TRYING TO CREATE PLOTS WITH SMOOTH LINES
 CONTINUE WORKING HERE
@@ -406,7 +458,7 @@ Explanation why I chose Spearman:
 - Spearman’s correlation has less stringent assumptions, assuming only that the relationship is monotonic. This means that the relationship has to be consistently increasing or decreasing, but that it does not have to do so in a linear manner (see left). 
 - Spearman’s correlation also performs better than Pearson’s correlation in instances where there are outliers or very few data point -> this is the case for my data.
 
-```{r}
+
 
 
 ```{r}
@@ -419,8 +471,6 @@ cor.test(temp_mm$building_height, temp_mm$monthly_mean_temperature, method = "sp
 
 Spearman’s test is non-parametric and based on ranking the values. It assumes that all values are distinct so that ranks are unique. When ties occur (e.g., two identical temperatures or building heights) the exact p-value can't be computed. So for these results, p-value can't be fully trusted (elevation has a statistically significant relationship with temperature) be the correlation coefficient (rho) can still be trusted.
 It is also an influencing factor, that I only work with n=31 data points
-```
-
 
 --------------------------------------------------------------------------------
 
@@ -438,7 +488,4 @@ all_data <- gpkg_files %>%
 
 # Write to a single layer in a new GeoPackage
 st_write(all_data, "../data/combined_temp_data.gpkg", layer = "all_temp_data", driver = "GPKG")
-
-
-temp_2023 <- sf::read_sf('../data/sensor_data_year_2023.gpkg')
 ```
