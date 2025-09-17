@@ -111,8 +111,8 @@ counts_5C_clean <- temp_clean %>%
   mutate(pct = n / sum(n), cum_pct = cumsum(pct))
 
 # Temperature distribution using 5°C bins for the year of 2023
-p <- ggplot(counts_5C_clean, aes(x = bin, y = n)) +
-  geom_col(fill = "steelblue", color = "black", alpha = 0.7) +
+p_dist <- ggplot(counts_5C_clean, aes(x = bin, y = n)) +
+  geom_col(fill = "#87cefa", color = "black", alpha = 0.7) +
   scale_x_discrete(drop = FALSE) +
   scale_y_continuous(labels = scales::label_number(big.mark = ",", accuracy = 1)) +
   labs(title = "Temperature Distribution — Heidelberg (2023, 5°C bins)",
@@ -121,25 +121,13 @@ p <- ggplot(counts_5C_clean, aes(x = bin, y = n)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-p
+p_dist
 
-# # File name of the output
-# fn_base <- sprintf("temperature_distribution_Heidelberg_2023_5C_%s",
-#                    format(Sys.Date(), "%Y%m%d"))
-# 
-# # Save PNG
-# ggsave(
-#   filename = file.path("../plots", paste0(fn_base, ".png")),
-#   plot = p, width = 10, height = 6, units = "in", dpi = 300
-# )
-```
-
-```{r}
-
-```
-
-```{r}
-
+# Save PNG
+ggsave(
+  filename = file.path("../plots", paste0("temperature_distribution_Heidelberg_2023", ".png")),
+  plot = p_dist, width = 10, height = 6, units = "in", dpi = 300
+)
 ```
 
 --------------------------------------------------------------------------------
@@ -152,61 +140,40 @@ temp_outlier <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
 
 station_data <- subset(temp_outlier, stationname == "MeteoHelix_09_Neuenheim_Bürgeramt")
 
-# Palette (adjust as you like)
-box_fill  <- "#1da1f2"
-box_line  <- "#0f4c81"
-out_color <- "#0f4c81"
-text_col  <- "#071e3d"
-
-station_data %>%
+p_outlier <- station_data %>%
   filter(!is.na(dateobserved), !is.na(temperature)) %>%
   mutate(month = floor_date(dateobserved, "month")) %>%
   ggplot(aes(x = factor(month), y = temperature)) +
-  geom_boxplot(
-    fill = box_fill, color = box_line,
-    outlier.shape = 18, outlier.size = 1.5, outlier.alpha = 1,
-    outlier.colour = out_color
-  ) +
-  # 3-line summary above each box: Count, Mean, SD
+  geom_violin(fill = "#87cefa", color = "black", trim = FALSE,
+              draw_quantiles = c(0.25, 0.5, 0.75)) +  # show Q1 / median / Q3
   stat_summary(
     fun.data = function(y) {
       y <- y[!is.na(y)]
       if (!length(y)) return(data.frame(y = NA, label = ""))
-      n <- length(y)
-      m <- mean(y)
-      s <- sd(y)
-      q1 <- quantile(y, 0.25)
-      q3 <- quantile(y, 0.75)
-      iqr <- q3 - q1
-      upper <- q3 + 1.5 * iqr
-      pad <- 0.2 * diff(range(y)) + 1e-9  # a little headroom
-
-      data.frame(
-        y = upper + pad,
-        label = sprintf("Count = %d\nMean = %.2f\nSD = %.2f", n, m, s)
-      )
+      n <- length(y); m <- mean(y); s <- sd(y)
+      pad <- 0.03 * diff(range(y)) + 1e-9
+      data.frame(y = max(y) + pad,
+                 label = sprintf("Count = %d\nMean = %.2f\nSD = %.2f", n, m, s))
     },
-    geom = "text",
-    hjust = 0.5, 
-    vjust = 0,
-    aes(label = after_stat(label)),
-    size = 3.6, colour = text_col
+    geom = "text", hjust = 0.5, vjust = -0.8,
+    aes(label = after_stat(label)), size = 2.6, colour = text_col
   ) +
-  labs(
-    title = "Monthly temperature distribution — MeteoHelix_09_Neuenheim_Bürgeramt\nInactive since May 8, 2023",
-    x = "Month",
-    y = "Temperature (°C)"
-  ) +
-  # nicer month labels + extra top room for the summary text
+  labs(title = "Monthly temperature distribution for station\nMeteoHelix_09_Neuenheim_Bürgeramt (Inactive since May 8, 2023)",
+       x = "Month", y = "Temperature (°C)") +
   scale_x_discrete(labels = function(x) format(as.Date(x), "%b %Y")) +
   scale_y_continuous(expand = expansion(mult = c(0.03, 0.18))) +
   theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    plot.title = element_text(face = "bold")
-  )
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold"))
 
+p_outlier
+
+# # Save PNG
+ggsave(
+  filename = file.path("../plots", paste0("monthly_temperature_outlier_violin", ".png")),
+  plot = p_outlier, width = 10, height = 6, units = "in", dpi = 300
+)
 ```
 
 This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
