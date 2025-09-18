@@ -126,7 +126,8 @@ p_temp <- ggplot(daily, aes(x = date)) +
   guides(color = guide_legend(override.aes = list(linewidth = c(0.8, 0.8), alpha = 1))) +
   labs(
     title = "2023 Temperature by Station — ordered by sensor ID",
-    x = NULL, y = "Temperature (°C)"
+    x = NULL, y = "Temperature (°C)",
+    caption = "Source: Pre-processed sensor data"
   ) +
   theme_minimal(base_size = 10) +
   theme(panel.grid.minor = element_blank(),
@@ -145,7 +146,56 @@ p_temp
 
 --------------------------------------------------------------------------------
 
-```{r Further pre-processing}
+Check specific measurement station for outliers
+To run this code successfully and really display the outliers the data needs to be imported again
+```{r select example station to highlight outliers}
+
+# Select one specific station by entity_id
+station_data <- subset(temp, entity_id == "hd:DE_Heidelberg_69120_34:WeatherObserved")
+
+# Build violin plot of monthly temperature distribution with summary stats
+p_outlier <- station_data %>%
+  filter(!is.na(dateobserved), !is.na(temperature)) %>%
+  mutate(month = floor_date(dateobserved, "month")) %>%
+  ggplot(aes(x = factor(month), y = temperature)) +
+  geom_violin(fill = "#87cefa", color = "black", trim = FALSE,
+              draw_quantiles = c(0.25, 0.5, 0.75)) +  # show Q1 / median / Q3
+  stat_summary(
+    fun.data = function(y) {
+      y <- y[!is.na(y)]
+      if (!length(y)) return(data.frame(y = NA, label = ""))
+      n <- length(y); m <- mean(y); s <- sd(y)
+      pad <- 0.03 * diff(range(y)) + 1e-9
+      data.frame(y = max(y) + pad,
+                 label = sprintf("Count = %d\nMean = %.2f\nSD = %.2f", n, m, s))
+    },
+    geom = "text", hjust = 0.5, vjust = -0.8,
+    aes(label = after_stat(label)), size = 2.6
+  ) +
+  labs(title = "Monthly temperature distribution for station\nhd:DE_Heidelberg_69120_34:WeatherObserved (Inactive since May 8, 2023)",
+       x = "Month", y = "Temperature (°C)",
+       caption = "Source: Pre-processed sensor data") +
+  scale_x_discrete(labels = function(x) format(as.Date(x), "%b %Y")) +
+  scale_y_continuous(expand = expansion(mult = c(0.03, 0.18))) +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold"))
+
+p_outlier
+
+# Save plot
+ggsave(
+  filename = file.path("../plots", paste0("monthly_temperature_outlier_violin", ".png")),
+  plot = p_outlier, width = 10, height = 6, units = "in", dpi = 300
+)
+```
+
+This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year. The same happened to three other stations which will not be part of this analysis.
+
+--------------------------------------------------------------------------------
+
+```{r Further pre-processing to drop all inconsistent stations}
 
 # Drop all measurement stations which didn't collect data the entire year around
 temp_clean_station <- temp_clean %>%
@@ -160,22 +210,22 @@ temp_clean_station <- temp_clean %>%
 # Check if exactly 4 stations were dropped
 length(unique(na.omit(temp_clean$entity_id)))
 length(unique(na.omit(temp_clean_station$entity_id)))
-
 ```
 
+--------------------------------------------------------------------------------
 
 ```{r Check temperature distribution using bins of 5°C}
 
 # Build global 5 °C breaks from the cleaned data (rounded outward)
-tmin_clean <- floor(min(temp_clean$temperature, na.rm = TRUE) / 5) * 5
-tmax_clean <- ceiling(max(temp_clean$temperature, na.rm = TRUE) / 5) * 5
+tmin_clean <- floor(min(temp_clean_station$temperature, na.rm = TRUE) / 5) * 5
+tmax_clean <- ceiling(max(temp_clean_station$temperature, na.rm = TRUE) / 5) * 5
 breaks     <- seq(tmin_clean, tmax_clean, by = 5)
 
 # Add clean labels
 labs <- sprintf("%d to %d", breaks[-length(breaks)], breaks[-1])
 
 # Bin + count, DROP GEOMETRY to avoid sfc column
-counts_5C_clean <- temp_clean %>%
+counts_5C_clean <- temp_clean_station %>%
   sf::st_drop_geometry() %>%
   transmute(bin = cut(temperature,
                       breaks = breaks,
@@ -210,99 +260,14 @@ ggsave(
 
 --------------------------------------------------------------------------------
 
-Check specific measurement station for outliers
-To run this code successfully and really display the outliers the data needs to be imported again
-```{r}
-# Read temperature data for the entire year of 2023
-temp_outlier <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
-
-station_data <- subset(temp_outlier, stationname == "MeteoHelix_09_Neuenheim_Bürgeramt")
-
-p_outlier <- station_data %>%
-  filter(!is.na(dateobserved), !is.na(temperature)) %>%
-  mutate(month = floor_date(dateobserved, "month")) %>%
-  ggplot(aes(x = factor(month), y = temperature)) +
-  geom_violin(fill = "#87cefa", color = "black", trim = FALSE,
-              draw_quantiles = c(0.25, 0.5, 0.75)) +  # show Q1 / median / Q3
-  stat_summary(
-    fun.data = function(y) {
-      y <- y[!is.na(y)]
-      if (!length(y)) return(data.frame(y = NA, label = ""))
-      n <- length(y); m <- mean(y); s <- sd(y)
-      pad <- 0.03 * diff(range(y)) + 1e-9
-      data.frame(y = max(y) + pad,
-                 label = sprintf("Count = %d\nMean = %.2f\nSD = %.2f", n, m, s))
-    },
-    geom = "text", hjust = 0.5, vjust = -0.8,
-    aes(label = after_stat(label)), size = 2.6, colour = text_col
-  ) +
-  labs(title = "Monthly temperature distribution for station\nhd:DE_Heidelberg_69120_34:WeatherObserved (Inactive since May 8, 2023)",
-       x = "Month", y = "Temperature (°C)") +
-  scale_x_discrete(labels = function(x) format(as.Date(x), "%b %Y")) +
-  scale_y_continuous(expand = expansion(mult = c(0.03, 0.18))) +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.minor = element_blank(),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.title = element_text(face = "bold"))
-
-p_outlier
-
-# # Save PNG
-ggsave(
-  filename = file.path("../plots", paste0("monthly_temperature_outlier_violin", ".png")),
-  plot = p_outlier, width = 10, height = 6, units = "in", dpi = 300
-)
-```
-
-This measurement station started to detect wrong temperature information starting in early May and stopped recording on the 8th of May 2023. Therefore, this measurement station will not be part of the analysis and excluded as it only provides information for the first 4 months of the year.
-
-
-
-```{r}
-
-
-
-```
-
-
-LOOP IS CURRENTLY NOT RUNNING WHEN TRYING TO CREATE PLOTS WITH SMOOTH LINES
-CONTINUE WORKING HERE
-
-```{r Create plots for each station for temp measurements 2023}
-yr    <- max(year(temp_clean$dateobserved), na.rm = TRUE)
-x_min <- ymd_hms(sprintf("%d-01-01 00:00:00", yr), tz = "Europe/Berlin")
-x_max <- ymd_hms(sprintf("%d-12-31 23:59:59", yr), tz = "Europe/Berlin")
-
-stations <- sort(unique(temp_clean$stationname))
-for (st in stations) {
-  gdat <- temp_clean %>%
-    filter(stationname == st, year(dateobserved) == yr) %>%
-    arrange(dateobserved)
-
-  p <- ggplot(gdat, aes(x = dateobserved, y = temperature)) +
-    geom_line(linewidth = 0.3, alpha = 0.9, lineend = "round") +
-    labs(title = paste("Temperature Measurements 2023 —", st, yr),
-         x = "Month", y = "Temperature (°C)") +
-    scale_x_datetime(breaks = date_breaks("1 month"),
-                     labels = label_date("%b"),
-                     limits = c(x_min, x_max),
-                     expand = expansion(mult = c(0, 0))) +
-    theme_minimal(base_size = 12) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1),
-          legend.position = "none")
-  print(p)
-}
-```
 
 
 --------------------------------------------------------------------------------
 
-Analyse temperate data for the entire year of 2023
-Each plot will include the temperature information over time 
-
+Analyse temperate data over the course of one month and compare them with each other.
 Loop through all the months
 
-```{r Loop through months to compute hourly mean temperatures and generate time series plots per station.}
+```{r Loop through months to compute hourly mean temperatures and generate time series plots per station}
 # Define your input folder
 input_folder <- "../data/temp_HD"
 output_folder <- "../temp_timeseries"
