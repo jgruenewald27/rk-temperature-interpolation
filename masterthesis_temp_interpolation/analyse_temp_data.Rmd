@@ -158,7 +158,7 @@ p_outlier <- station_data %>%
   filter(!is.na(dateobserved), !is.na(temperature)) %>%
   mutate(month = floor_date(dateobserved, "month")) %>%
   ggplot(aes(x = factor(month), y = temperature)) +
-  geom_violin(fill = "#87cefa", color = "black", trim = FALSE,
+  geom_violin(fill = "#FFA500", color = "black", trim = FALSE,
               draw_quantiles = c(0.25, 0.5, 0.75)) +  # show Q1 / median / Q3
   stat_summary(
     fun.data = function(y) {
@@ -240,7 +240,7 @@ counts_5C_clean <- temp_clean_station %>%
 
 # Temperature distribution using 5°C bins for the year of 2023
 p_dist <- ggplot(counts_5C_clean, aes(x = bin, y = n)) +
-  geom_col(fill = "#87cefa", color = "black", alpha = 0.7) +
+  geom_col(fill = "#FFA500", color = "black", alpha = 0.7) +
   scale_x_discrete(drop = FALSE) +
   scale_y_continuous(labels = scales::label_number(big.mark = ",", accuracy = 1)) +
   labs(title = "Temperature Distribution — Heidelberg (2023, 5°C bins)",
@@ -260,6 +260,52 @@ ggsave(
 
 --------------------------------------------------------------------------------
 
+Calculate hourly mean temperature
+```{r}
+
+# Calculate hourly mean temp for cleaned data
+temp_clean_station_hm <- temp_clean_station %>%
+    group_by(entity_id, chour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+```
+
+--------------------------------------------------------------------------------
+
+Heatmap of temperature patterns
+```{r}
+ggplot(temp_clean_station_hm, aes(x = hour, y = entity_id, fill = hm_temp)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(title = "Hourly Mean Temperature (Jan 2023)",
+       x = "Date & Hour",
+       y = "Station",
+       fill = "°C") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 6))  # shrink labels if 29 stations
+```
+
+--------------------------------------------------------------------------------
+
+```{r}
+temp_by_hour <- temp_clean_station_hm %>%
+  mutate(hour_of_day = hour(hour)) %>%
+  filter(!is.na(hour_of_day))
+
+ggplot(temp_by_hour, aes(x = factor(hour_of_day), y = hm_temp, fill = hour_of_day)) +
+  geom_boxplot(fill = "#FFA500", outlier.alpha = 0.3) +
+  labs(
+    title    = "Diurnal Cycle of Hourly Mean Temperature Across Stations",
+    subtitle = "Distribution across 29 measurement stations for the year 2023",
+    x        = "Hour of Day",
+    y        = "Hourly Mean Temperature (°C)",
+    fill     = "Hour of Day"
+  ) +
+  theme_minimal()
+```
+
+hourly mean temps peak around 13-15 
+Less between station spread in early morning and late day hours
 
 
 --------------------------------------------------------------------------------
