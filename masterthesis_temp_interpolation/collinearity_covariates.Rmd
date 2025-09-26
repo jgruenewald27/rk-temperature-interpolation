@@ -1,0 +1,380 @@
+---
+title: "collinearity_covariates"
+author: "Johannes Gruenewald"
+date: "2025-07-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load Required Libraries
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
+------------------------------------------------------------------------
+
+Load temp data and run pre-processing
+```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
+
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Calculate hour count since epoch, rounded down to current hour
+temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Check if exactly 4 stations were dropped
+length(unique(na.omit(temp_clean$entity_id)))
+length(unique(na.omit(temp_clean_station$entity_id)))
+
+# Calculate hourly mean temp for cleaned data
+temp_clean_station_hm <- temp_clean_station %>%
+    group_by(entity_id, chour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+```
+
+------------------------------------------------------------------------
+
+```{r}
+# Select one specific hourly mean for all the measurement stations
+
+# Select, for each station, the record at its latest hour
+#sel_temp_hm <- temp_hm %>%
+#  group_by(stationname) %>%
+#  slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
+#  ungroup()
+
+# For one specific timestamp
+sel_temp_hm <- temp_hm %>%
+  filter(chour == 468949) %>%
+  group_by(stationname) %>%
+  slice(1) %>%  # Optional: in case multiple rows match per group
+  ungroup()
+
+# Plot selected data
+plot(sel_temp_hm$mh_temp,
+     pch = 21,                     
+     col = "black",              
+     bg = "grey",               
+     cex = 1.4,               
+     main = paste("Hourly Mean Temperature at 31 Stations\n( Timestamp:", unique(sel_temp_hm$hour),")"),
+     xlab = "Station Index",
+     ylab = "Mean Temperature (°C)",
+     ylim = range(sel_temp_hm$mh_temp) + c(-0.5, 0.5),
+     las = 1,                     
+     bty = "l"                     
+)
+grid()
+```
+
+------------------------------------------------------------------------
+
+Load and process environmental covariates
+
+```{r}
+# Load the elevation data
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem, "EPSG:32632")
+```
+
+```{r}
+# Load the elevation data
+tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the elevation data to match correct CRS
+tch <- terra::project(tch, "EPSG:32632")
+
+# Check if the two covariates have the same crs
+crs(tch) == crs(dem)
+```
+
+Set Gaussian filter
+
+```{r}
+# The logic: Trees have a cooling effect on the surrounding area via shade, evapotranspiration, etc.
+# That effect is strongest closest to the tree and fades with distance.
+# A Gaussian filter models this natural distance decay very well.
+
+#set margins for plots
+par(mfrow = c(2, 1), oma = c(0, 1, 0, 1))
+
+# Gaussian filter with radius 60 m and default sigma (≈ radius/3)
+w <- focalWeight(tch, d = 60, type = "Gauss")
+
+# Apply to tree canopy height to model decaying influence
+tch <- focal(tch, w = w, fun = sum, na.rm = TRUE)
+
+plot(tch, main ="Original Input Raster Tree Canopy Height ") #plot orig
+plot(tch, main="Gaussian Tree Cooling Effect (60 m)") #plot Gaussian filter in 60 m distaince
+```
+
+```{r}
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
+
+# Reproject the elevation data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, "EPSG:32632")
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
+```
+
+------------------------------------------------------------------------
+
+```{r}
+# Create a Raster Stack for all the covariate information
+
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elev", "canopy", "bldg")
+
+env_stack
+```
+
+```{r}
+# Also add lat and lon to the raster stack
+
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+```
+
+```{r}
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+grids
+
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+```
+
+```{r}
+# Plot all the covariates before proceeding with regression and kriging
+
+grid.arrange(
+  spplot(grids_sp["elev"],    
+         main = "Elevation [m]",           
+         col.regions = viridis::viridis(100)),
+  spplot(grids_sp["canopy"],  
+         main = "Tree Canopy Height [m]",  
+         col.regions = hcl.colors(100, "YlGn")),
+  spplot(grids_sp["bldg"],    
+         main = "Building Height [m]",     
+         col.regions = heat.colors(100)),
+  ncol = 2
+)
+
+# If needed 
+#   spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
+```
+
+------------------------------------------------------------------------
+
+```{r}
+# Adding covariates to temperature data
+
+# Convert Spatial object to a RasterBrick
+r_brick <- brick(grids_sp)
+
+# Convert the RasterBrick to a terra SpatRaster object
+grid_terra <- rast(r_brick)
+
+# Extract raster values at the point locations
+extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
+
+# Remove the first column (ID)
+extracted_vals <- extracted_vals[,-1]
+
+# Combine the point data with the extracted raster values
+temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
+
+str(temp_shm.ex)
+```
+
+------------------------------------------------------------------------
+IMPORTANT SECTION
+
+Calculate correlation between the three covariates
+
+```{r}
+cor(temp_shm.ex[c("elev", "canopy", "bldg")])
+```
+
+The results of this analysis actually explain how Heidelberg and its surroundings look like!
+
+Elevation and canopy are moderately positively correlated
+→ Higher elevations tend to have more tree canopy in your dataset.
+
+Elevation and building height are moderately negatively correlated
+→ Taller buildings tend to be in lower elevation areas (e.g., valley floors or urban cores).
+
+Canopy and building height have low correlation
+→ Their effects on temperature are likely more distinct.
+
+------------------------------------------------------------------------
+
+Multicollinearity
+
+Test for simple Linear Regression Model
+
+In regression analysis, multicollinearity occurs when two or more predictor variables are highly correlated with each other, such that they do not provide unique or independent information in the regression model.
+
+If the degree of correlation is high enough between predictor variables, it can cause problems when fitting and interpreting the regression model. 
+
+The most straightforward way to detect multicollinearity in a regression model is by calculating a metric known as the variance inflation factor, often abbreviated VIF.
+
+VIF measures the strength of correlation between predictor variables in a model. It takes on a value between 1 and positive infinity.
+
+We use the following rules of thumb for interpreting VIF values:
+
+- VIF = 1: There is no correlation between a given predictor variable and any other predictor variables in the model.
+- VIF between 1 and 5: There is moderate correlation between a given predictor variable and other predictor variables in the model.
+- VIF > 5: There is severe correlation between a given predictor variable and other predictor variables in the model.
+
+Source: https://www.statology.org/multicollinearity-in-r/
+
+```{r}
+#define multiple linear regression model
+model <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
+
+#calculate the VIF for each predictor variable in the model
+vif(model)
+```
+
+None of the predictors (elev, canopy, bldg) show problematic multicollinearity. All VIFs are comfortably under 5, suggesting the model is stable with respect to predictor relationships.
+
+Note: If multicollinearity does turn out to be a problem in your model, the quickest fix in most cases is to remove one or more of the highly correlated variables.
+
+This is often an acceptable solution because the variables you’re removing are redundant anyway and add little unique or independent information in the model.
+
+------------------------------------------------------------------------
+
+GAM for all three covariates
+
+Comment: A general rule of thumb is to use a high number of splines and use cross-validation of lambda (λ) values to find the model that generalises best. Remember we can have different splines and lambda values for every variable in our model.
+
+```{r}
+gam_all <- gam(mh_temp ~ 
+                  s(elev) + 
+                  s(canopy) + 
+                  s(bldg), 
+                data = temp_shm.ex)
+summary(gam_all)
+
+concurvity(gam_all, full = TRUE)
+```
+
+
+
+Example: Visualize the results
+
+```{r}
+# Vary elevation across its range; fix the others at their median
+predict_temp <- data.frame(
+  elevation = seq(min(temp_shm.ex$elev), max(temp_shm.ex$elev), length.out = 20),
+  tree_canopy_height = median(temp_shm.ex$canopy),
+  building_height = median(temp_shm.ex$bldg)
+)
+
+# Predict using the full GAM model
+predictions <- predict(gam_all, newdata = predict_temp, type = "response", se.fit = TRUE)
+
+# Plot the data and the GAM fit
+ggplot() +
+  geom_point(data = temp_shm.ex, aes(x = elevation, y = mh_temp)) +
+  geom_line(data = data.frame(elevation = predict_temp$elevation, mh_temp = predictions$fit), 
+            aes(x = elevation, y = mh_temp), color = "blue", size = 1) +
+  geom_ribbon(data = data.frame(elevation = predict_temp$elevation, fit = predictions$fit, 
+                                se = predictions$se.fit), aes(x = elevation, 
+                                ymin = fit - 1.96 * se, 
+                                ymax = fit + 1.96 * se), alpha = 0.3) +
+  labs(title = "GAM Fit for Monthly Mean Temperature vs. Elevation", 
+       x = "Elevation [m]", y = "Monthly Mean Temperature [°C]") +
+  theme_minimal()
+```
