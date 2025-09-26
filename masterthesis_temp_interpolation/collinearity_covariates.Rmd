@@ -85,6 +85,14 @@ temp_clean_station_hm <- temp_clean_station %>%
     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 ```
 
+Read AOI
+```{r}
+
+# Read admin boundaries of HD
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+```
+
+
 ------------------------------------------------------------------------
 
 ```{r}
@@ -236,6 +244,21 @@ grids_sp@data
 
 ```{r}
 # Plot all the covariates before proceeding with regression and kriging
+p1 <- spplot(grids_sp["elev"],    
+             main = "Elevation [m]",           
+             col.regions = viridis::viridis(100))
+
+p2 <- spplot(grids_sp["canopy"],  
+             main = "Tree Canopy Height [m]",  
+             col.regions = hcl.colors(100, "YlGn"))
+
+p3 <- spplot(grids_sp["bldg"],    
+             main = "Building Height [m]",     
+             col.regions = heat.colors(100))
+
+p1
+p2
+p3
 
 grid.arrange(
   spplot(grids_sp["elev"],    
@@ -253,6 +276,74 @@ grid.arrange(
 # If needed 
 #   spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
 ```
+
+```{r}
+library(sp)
+library(gridExtra)
+library(viridis)
+
+# ----------------------------
+# Define common scales
+# ----------------------------
+# Elevation range
+elev_range <- range(grids_sp$elev, na.rm = TRUE)
+
+# Canopy + building heights (use same 0–max for comparability)
+height_max <- max(c(grids_sp$canopy, grids_sp$bldg), na.rm = TRUE)
+
+# ----------------------------
+# Make lattice plots
+# ----------------------------
+
+# Elevation with viridis
+p1 <- spplot(grids_sp["elev"],    
+             main = "Elevation [m] (Heidelberg)",           
+             at = seq(floor(elev_range[1]/50)*50, ceiling(elev_range[2]/50)*50, 50),
+             col.regions = viridis(100),
+             scales = list(draw = TRUE))  # show coords
+
+# Tree canopy height with shared scale
+p2 <- spplot(grids_sp["canopy"],  
+             main = "Tree Canopy Height [m]",  
+             at = seq(0, ceiling(height_max/5)*5, 5),
+             col.regions = hcl.colors(100, "YlGn"),
+             scales = list(draw = TRUE))
+
+# Building height with shared scale
+p3 <- spplot(grids_sp["bldg"],    
+             main = "Building Height [m]",     
+             at = seq(0, ceiling(height_max/5)*5, 5),
+             col.regions = heat.colors(100),
+             scales = list(draw = TRUE))
+
+# ----------------------------
+# Arrange plots
+# ----------------------------
+grid.arrange(p1, p2, p3, ncol = 2)
+
+# ----------------------------
+# Add scalebar + north arrow
+# ----------------------------
+# If grids_sp has a CRS in meters, you can use sp.layout
+scalebar_layout <- list("SpatialPolygonsRescale", layout.scale.bar(),
+                        offset = c(bbox(grids_sp)[1,1] + 1000, bbox(grids_sp)[2,1] + 1000),
+                        scale = 2000, fill = c("black","white"))
+northarrow_layout <- list("SpatialPolygonsRescale", layout.north.arrow(),
+                          offset = c(bbox(grids_sp)[1,1] + 3000, bbox(grids_sp)[2,1] + 1000),
+                          scale = 2000)
+
+# Example adding to building height plot:
+p3_with_layout <- spplot(grids_sp["bldg"],
+                         main = "Building Height [m] with scalebar",
+                         at = seq(0, ceiling(height_max/5)*5, 5),
+                         col.regions = heat.colors(100),
+                         sp.layout = list(scalebar_layout, northarrow_layout),
+                         scales = list(draw = TRUE))
+
+print(p3_with_layout)
+
+```
+
 
 ------------------------------------------------------------------------
 
