@@ -379,17 +379,13 @@ Source: https://www.statology.org/multicollinearity-in-r/
 
 ```{r}
 #define multiple linear regression model
-model <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
+mlr_coll <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_clean_station_hm_cov)
 
 #calculate the VIF for each predictor variable in the model
-vif(model)
+vif(mlr_coll)
 ```
 
-None of the predictors (elev, canopy, bldg) show problematic multicollinearity. All VIFs are comfortably under 5, suggesting the model is stable with respect to predictor relationships.
-
-Note: If multicollinearity does turn out to be a problem in your model, the quickest fix in most cases is to remove one or more of the highly correlated variables.
-
-This is often an acceptable solution because the variables you’re removing are redundant anyway and add little unique or independent information in the model.
+None of the predictors (elevation, canopy height, building height) show problematic multicollinearity. All VIFs are under 5, suggesting the model is stable with respect to predictor relationships.
 
 ------------------------------------------------------------------------
 
