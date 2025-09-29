@@ -247,8 +247,7 @@ grids_sp@data
 hd_bounds_sp <- as(hd_bounds, "Spatial")
 hd_bounds_sp <- spTransform(as(hd_bounds, "Spatial"), crs(grids_sp))
 
-
-bounds.layer <- list("sp.polygons", hd_bounds_sp, lwd = 2, col = "white", first = FALSE)
+bounds.layer <- list("sp.polygons", hd_bounds_sp, lwd = 2, col = "black", first = FALSE)
 
 # Elevation
 p1 <- spplot(grids_sp["elev"],    
@@ -262,93 +261,43 @@ p1 <- spplot(grids_sp["elev"],
 p2 <- spplot(grids_sp["canopy"],  
              main = "Global Forest Canopy Height\nresampled to 23,5 m spatial resolution",
              sub = list("Source: Potapov et al. (2021)", cex = 0.8),
-             col.regions = hcl.colors(100, "YlGn"),
+             col.regions = rev(hcl.colors(100, "YlGn")),
              sp.layout = list(bounds.layer),
              colorkey = list(space = "right", title = "Forest Canopy Height [m]"))
 
 # Building Height
 p3 <- spplot(grids_sp["bldg"],    
-             main = "Building Height [m]",     
-             col.regions = heat.colors(100),
+             main = "Global Building Height\nresampled to 23,5 m spatial resolution",
+             sub = list("Source: GHS-BUILT-H - R2023A from Global Human Settlement Layer", cex = 0.8),
+             col.regions = hcl.colors(100, "YlOrBr"),
              sp.layout = list(bounds.layer),
              colorkey = list(space = "right", title = "Building Height [m]"))
-
 
 p1
 p2
 p3
+
+# Save as png
+# Elevation
+png("../plots/elevation.png", width = 2000, height = 1600, res = 300)
+print(p1)
+dev.off()
+
+# Tree Canopy
+png("../plots/canopy.png", width = 2000, height = 1600, res = 300)
+print(p2)
+dev.off()
+
+# Building Height
+png("../plots/building_height.png", width = 2000, height = 1600, res = 300)
+print(p3)
+dev.off()
+
 # If needed 
 #   spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
 ```
 
-
-
-```{r}
-library(sp)
-library(gridExtra)
-library(viridis)
-
-# ----------------------------
-# Define common scales
-# ----------------------------
-# Elevation range
-elev_range <- range(grids_sp$elev, na.rm = TRUE)
-
-# Canopy + building heights (use same 0–max for comparability)
-height_max <- max(c(grids_sp$canopy, grids_sp$bldg), na.rm = TRUE)
-
-# ----------------------------
-# Make lattice plots
-# ----------------------------
-
-# Elevation with viridis
-p1 <- spplot(grids_sp["elev"],    
-             main = "Elevation [m] (Heidelberg)",           
-             at = seq(floor(elev_range[1]/50)*50, ceiling(elev_range[2]/50)*50, 50),
-             col.regions = viridis(100),
-             scales = list(draw = TRUE))  # show coords
-
-# Tree canopy height with shared scale
-p2 <- spplot(grids_sp["canopy"],  
-             main = "Tree Canopy Height [m]",  
-             at = seq(0, ceiling(height_max/5)*5, 5),
-             col.regions = hcl.colors(100, "YlGn"),
-             scales = list(draw = TRUE))
-
-# Building height with shared scale
-p3 <- spplot(grids_sp["bldg"],    
-             main = "Building Height [m]",     
-             at = seq(0, ceiling(height_max/5)*5, 5),
-             col.regions = heat.colors(100),
-             scales = list(draw = TRUE))
-
-# ----------------------------
-# Arrange plots
-# ----------------------------
-grid.arrange(p1, p2, p3, ncol = 2)
-
-# ----------------------------
-# Add scalebar + north arrow
-# ----------------------------
-# If grids_sp has a CRS in meters, you can use sp.layout
-scalebar_layout <- list("SpatialPolygonsRescale", layout.scale.bar(),
-                        offset = c(bbox(grids_sp)[1,1] + 1000, bbox(grids_sp)[2,1] + 1000),
-                        scale = 2000, fill = c("black","white"))
-northarrow_layout <- list("SpatialPolygonsRescale", layout.north.arrow(),
-                          offset = c(bbox(grids_sp)[1,1] + 3000, bbox(grids_sp)[2,1] + 1000),
-                          scale = 2000)
-
-# Example adding to building height plot:
-p3_with_layout <- spplot(grids_sp["bldg"],
-                         main = "Building Height [m] with scalebar",
-                         at = seq(0, ceiling(height_max/5)*5, 5),
-                         col.regions = heat.colors(100),
-                         sp.layout = list(scalebar_layout, northarrow_layout),
-                         scales = list(draw = TRUE))
-
-print(p3_with_layout)
-
-```
+------------------------------------------------------------------------
 
 
 ------------------------------------------------------------------------
