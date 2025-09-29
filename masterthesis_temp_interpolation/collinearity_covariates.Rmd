@@ -34,6 +34,7 @@ library(tidyverse)
 library(ggplot2)
 library(scales)
 library(gridExtra)
+library(corrplot)
 
 # Mapping & Interactive Visualization
 library(tmap)
@@ -329,7 +330,18 @@ IMPORTANT SECTION
 Calculate correlation between the three covariates
 
 ```{r}
-cor(temp_shm.ex[c("elev", "canopy", "bldg")])
+# Convert Spatial object into plain data.frame
+covariates_df <- as.data.frame(grids_sp)  
+
+# Show descriptive statistics to check for NAs
+summary(covariates_df[c("elev", "canopy", "bldg")])  
+
+# Compute correlation matrix for elev, canopy, and bldg, using all available non-missing pairs
+corr <- cor(covariates_df[c("elev", "canopy", "bldg")], use = "pairwise.complete.obs")  
+
+# Visualize the correlation matrix as a color heatmap, with values and formatted labels
+corrplot(corr, method = "color", addCoef.col = "black",
+         tl.col = "black", tl.srt = 45, number.cex = 0.8)  
 ```
 
 The results of this analysis actually explain how Heidelberg and its surroundings look like!
