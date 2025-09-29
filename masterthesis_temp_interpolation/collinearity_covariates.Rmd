@@ -203,7 +203,7 @@ ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
 env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
 
 # Rename layers for clarity
-names(env_stack) <- c("elev", "canopy", "bldg")
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
 
 env_stack
 ```
@@ -251,7 +251,7 @@ hd_bounds_sp <- spTransform(as(hd_bounds, "Spatial"), crs(grids_sp))
 bounds.layer <- list("sp.polygons", hd_bounds_sp, lwd = 2, col = "black", first = FALSE)
 
 # Elevation
-p1 <- spplot(grids_sp["elev"],    
+p1 <- spplot(grids_sp["elevation"],    
              main = "Elevation\nat 23,5 m spatial resolution",
              sub = list("Source: Data from Shuttle Radar Topography Mission (SRTM)", cex = 0.8),
              col.regions = viridis::viridis(100),
@@ -259,7 +259,7 @@ p1 <- spplot(grids_sp["elev"],
              colorkey = list(space = "right", title = "Elevation [m]"))
 
 # Tree Canopy
-p2 <- spplot(grids_sp["canopy"],  
+p2 <- spplot(grids_sp["canopy_height"],  
              main = "Global Forest Canopy Height\nresampled to 23,5 m spatial resolution",
              sub = list("Source: Potapov et al. (2021)", cex = 0.8),
              col.regions = rev(hcl.colors(100, "YlGn")),
@@ -267,7 +267,7 @@ p2 <- spplot(grids_sp["canopy"],
              colorkey = list(space = "right", title = "Forest Canopy Height [m]"))
 
 # Building Height
-p3 <- spplot(grids_sp["bldg"],    
+p3 <- spplot(grids_sp["building_height"],    
              main = "Global Building Height\nresampled to 23,5 m spatial resolution",
              sub = list("Source: GHS-BUILT-H - R2023A from Global Human Settlement Layer", cex = 0.8),
              col.regions = hcl.colors(100, "YlOrBr"),
@@ -334,14 +334,14 @@ Calculate correlation between the three covariates
 covariates_df <- as.data.frame(grids_sp)  
 
 # Show descriptive statistics to check for NAs
-summary(covariates_df[c("elev", "canopy", "bldg")])  
+summary(covariates_df[c("elevation", "canopy_height", "building_height")])  
 
 # Compute correlation matrix for elev, canopy, and bldg, using all available non-missing pairs
-corr <- cor(covariates_df[c("elev", "canopy", "bldg")], use = "pairwise.complete.obs")  
+corr <- cor(covariates_df[c("elevation", "canopy_height", "building_height")], use = "pairwise.complete.obs")  
 
 # Visualize the correlation matrix as a color heatmap, with values and formatted labels
 corrplot(corr, method = "color", addCoef.col = "black",
-         tl.col = "black", tl.srt = 45, number.cex = 0.8)  
+         tl.col = "black", tl.srt = 45, number.cex = 0.8) 
 ```
 
 The results of this analysis actually explain how Heidelberg and its surroundings look like!
