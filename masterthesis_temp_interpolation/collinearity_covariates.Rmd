@@ -46,7 +46,6 @@ library(car)
 
 ------------------------------------------------------------------------
 
-Load temp data and run pre-processing
 ```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
 
 # Read temperature data for the entire year of 2023
@@ -86,12 +85,10 @@ temp_clean_station_hm <- temp_clean_station %>%
     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 ```
 
-Read AOI
-```{r}
+```{r Read AOI}
 # Read admin boundaries of HD
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 ```
-
 
 ------------------------------------------------------------------------
 
@@ -129,17 +126,13 @@ grid()
 
 ------------------------------------------------------------------------
 
-Load and process environmental covariates
-
-```{r}
+```{r Load and pre-process environmental covariates}
 # Load the elevation data
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
 dem <- terra::project(dem, "EPSG:32632")
-```
 
-```{r}
 # Load the elevation data
 tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
 
@@ -152,6 +145,15 @@ tch <- terra::project(tch, "EPSG:32632")
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
+
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
+
+# Reproject the elevation data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, "EPSG:32632")
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
 ```
 
 Set Gaussian filter
@@ -174,21 +176,9 @@ plot(tch, main ="Original Input Raster Tree Canopy Height ") #plot orig
 plot(tch, main="Gaussian Tree Cooling Effect (60 m)") #plot Gaussian filter in 60 m distaince
 ```
 
-```{r}
-# Load the elevation data
-ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
-
-# Reproject the elevation data to match correct CRS
-ghs_bh <- terra::project(ghs_bh, "EPSG:32632")
-
-# Check if CRS is correct
-crs(ghs_bh) == crs(dem)
-```
-
 ------------------------------------------------------------------------
 
-```{r}
-# Create a Raster Stack for all the covariate information
+```{r Create a Raster Stack for all the covariate information}
 
 # Check resolution of each raster
 terra::res(dem)
@@ -208,8 +198,7 @@ names(env_stack) <- c("elevation", "canopy_height", "building_height")
 env_stack
 ```
 
-```{r}
-# Also add lat and lon to the raster stack
+```{r Add lat and lon to the raster stack}
 
 # Create coordinate rasters
 lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
@@ -224,7 +213,8 @@ names(lon_raster) <- "lon"
 names(lat_raster) <- "lat"
 ```
 
-```{r}
+```{r Stack the three raster layer}
+
 # Stack the three raster layers
 grids <- c(env_stack, lon_raster, lat_raster)
 
@@ -242,9 +232,9 @@ grids_sp <- as(grids_ras, "SpatialGridDataFrame")
 grids_sp@data
 ```
 
-```{r}
-# Plot all the covariates before proceeding with regression and kriging
-# add Heidelberg district boundaries to plots
+```{r Plot all covariates}
+
+# Add Heidelberg district boundaries to plots
 hd_bounds_sp <- as(hd_bounds, "Spatial")
 hd_bounds_sp <- spTransform(as(hd_bounds, "Spatial"), crs(grids_sp))
 
@@ -300,33 +290,9 @@ dev.off()
 
 ------------------------------------------------------------------------
 
-```{r}
-# Adding covariates to temperature data
-
-# Convert Spatial object to a RasterBrick
-r_brick <- brick(grids_sp)
-
-# Convert the RasterBrick to a terra SpatRaster object
-grid_terra <- rast(r_brick)
-
-# Extract raster values at the point locations
-extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
-
-# Remove the first column (ID)
-extracted_vals <- extracted_vals[,-1]
-
-# Combine the point data with the extracted raster values
-temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
-
-str(temp_shm.ex)
-```
-
-------------------------------------------------------------------------
-
 Calculate correlation between the three covariates
 
-```{r}
-
+```{r Calculate correlation between the three covariates}
 # Convert Spatial object into plain data.frame
 covariates_df <- as.data.frame(grids_sp)  
 
@@ -359,16 +325,35 @@ corrplot(corr_s, method = "color", addCoef.col = "black", tl.col = "black", tl.s
 dev.off()
 ```
 
-The results of this analysis actually explain how Heidelberg and its surroundings look like!
+The results fit really well to Heidelberg and its surroundings and describe how they look like.
 
-Elevation and canopy are moderately positively correlated
-→ Higher elevations tend to have more tree canopy in your dataset.
+-	Elevation vs. Canopy (r ≈ 0.83): Strong positive correlation — higher hills (e.g., Heiligenberg, Königstuhl) tend to have taller/denser canopy.
+-	Elevation vs. Building height (r ≈ −0.34): Moderate negative correlation — taller buildings are concentrated at lower elevations (valley floor).
+-	Canopy vs. Building height (r ≈ −0.36): Moderate negative correlation — built-up areas generally coincide with less canopy, and vice versa (they tend not to co-occur).
 
-Elevation and building height are moderately negatively correlated
-→ Taller buildings tend to be in lower elevation areas (e.g., valley floors or urban cores).
+------------------------------------------------------------------------
 
-Canopy and building height have low correlation
-→ Their effects on temperature are likely more distinct.
+```{r Adding covariates to temperature data}
+
+# Convert Spatial object to RasterBrick -> SpatRaster
+r_brick   <- brick(grids_sp)
+grid_terra <- rast(r_brick)
+
+# Extract raster values at point features
+ex <- terra::extract(grid_terra, temp_clean_station_hm)
+
+# Aggregate duplicates to a single row per original feature
+# Use mean
+ex_agg <- aggregate(. ~ ID, data = ex, FUN = mean, na.rm = TRUE)
+
+# Reorder aggregated rows to match original feature order
+ex_agg <- ex_agg[match(seq_len(nrow(temp_clean_station_hm)), ex_agg$ID), -1]
+
+# Bind attributes + extracted covariates
+temp_clean_station_hm_cov <- cbind(as.data.frame(temp_clean_station_hm), ex_agg)
+
+str(temp_clean_station_hm_cov)
+```
 
 ------------------------------------------------------------------------
 
