@@ -87,7 +87,6 @@ temp_clean_station_hm <- temp_clean_station %>%
 
 Read AOI
 ```{r}
-
 # Read admin boundaries of HD
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 ```
@@ -244,38 +243,45 @@ grids_sp@data
 
 ```{r}
 # Plot all the covariates before proceeding with regression and kriging
+# add Heidelberg district boundaries to plots
+hd_bounds_sp <- as(hd_bounds, "Spatial")
+hd_bounds_sp <- spTransform(as(hd_bounds, "Spatial"), crs(grids_sp))
+
+
+bounds.layer <- list("sp.polygons", hd_bounds_sp, lwd = 2, col = "white", first = FALSE)
+
+# Elevation
 p1 <- spplot(grids_sp["elev"],    
-             main = "Elevation [m]",           
-             col.regions = viridis::viridis(100))
+             main = "Elevation\nat 23,5 m spatial resolution",
+             sub = list("Source: Data from Shuttle Radar Topography Mission (SRTM)", cex = 0.8),
+             col.regions = viridis::viridis(100),
+             sp.layout = list(bounds.layer),
+             colorkey = list(space = "right", title = "Elevation [m]"))
 
+# Tree Canopy
 p2 <- spplot(grids_sp["canopy"],  
-             main = "Tree Canopy Height [m]",  
-             col.regions = hcl.colors(100, "YlGn"))
+             main = "Global Forest Canopy Height\nresampled to 23,5 m spatial resolution",
+             sub = list("Source: Potapov et al. (2021)", cex = 0.8),
+             col.regions = hcl.colors(100, "YlGn"),
+             sp.layout = list(bounds.layer),
+             colorkey = list(space = "right", title = "Forest Canopy Height [m]"))
 
+# Building Height
 p3 <- spplot(grids_sp["bldg"],    
              main = "Building Height [m]",     
-             col.regions = heat.colors(100))
+             col.regions = heat.colors(100),
+             sp.layout = list(bounds.layer),
+             colorkey = list(space = "right", title = "Building Height [m]"))
+
 
 p1
 p2
 p3
-
-grid.arrange(
-  spplot(grids_sp["elev"],    
-         main = "Elevation [m]",           
-         col.regions = viridis::viridis(100)),
-  spplot(grids_sp["canopy"],  
-         main = "Tree Canopy Height [m]",  
-         col.regions = hcl.colors(100, "YlGn")),
-  spplot(grids_sp["bldg"],    
-         main = "Building Height [m]",     
-         col.regions = heat.colors(100)),
-  ncol = 2
-)
-
 # If needed 
 #   spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
 ```
+
+
 
 ```{r}
 library(sp)
