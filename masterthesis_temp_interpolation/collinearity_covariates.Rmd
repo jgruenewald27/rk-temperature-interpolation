@@ -300,9 +300,6 @@ dev.off()
 
 ------------------------------------------------------------------------
 
-
-------------------------------------------------------------------------
-
 ```{r}
 # Adding covariates to temperature data
 
@@ -325,28 +322,38 @@ str(temp_shm.ex)
 ```
 
 ------------------------------------------------------------------------
-IMPORTANT SECTION
 
 Calculate correlation between the three covariates
 
 ```{r}
+
 # Convert Spatial object into plain data.frame
 covariates_df <- as.data.frame(grids_sp)  
 
 # Show descriptive statistics to check for NAs
 summary(covariates_df[c("elevation", "canopy_height", "building_height")])  
 
-# Compute correlation matrix for elev, canopy, and bldg, using all available non-missing pairs
-corr <- cor(covariates_df[c("elevation", "canopy_height", "building_height")], use = "pairwise.complete.obs")  
+# Correlations (Pearson + Spearman)
+corr_p <- cor(covariates_df[c("elevation","canopy_height","building_height")],
+              use="pairwise.complete.obs", method="pearson")
+corr_s <- cor(covariates_df[c("elevation","canopy_height","building_height")],
+              use="pairwise.complete.obs", method="spearman")
+
+corr_p
+corr_s
 
 # Visualize the correlation matrix as a color heatmap, with values and formatted labels
-png("../plots/correlation_covariates_plot.png", width = 2000, height = 1600, res = 300)
+png("../plots/correlation_covariates_pearson.png", width = 2000, height = 1600, res = 300)
 
-corrplot(corr,
-         method = "color",
-         addCoef.col = "black",
-         tl.col = "black",
-         tl.srt = 45,
+corrplot(corr_p, method = "color", addCoef.col = "black", tl.col = "black", tl.srt = 45,
+         number.cex = 0.8)
+
+dev.off()
+
+# same for spearman
+png("../plots/correlation_covariates_spearman.png", width = 2000, height = 1600, res = 300)
+
+corrplot(corr_s, method = "color", addCoef.col = "black", tl.col = "black", tl.srt = 45,
          number.cex = 0.8)
 
 dev.off()
