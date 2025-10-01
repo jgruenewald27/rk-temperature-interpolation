@@ -92,40 +92,6 @@ hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 
 ------------------------------------------------------------------------
 
-```{r}
-# Select one specific hourly mean for all the measurement stations
-
-# Select, for each station, the record at its latest hour
-#sel_temp_hm <- temp_hm %>%
-#  group_by(stationname) %>%
-#  slice_max(order_by = chour, n = 1, with_ties = FALSE) %>%
-#  ungroup()
-
-# For one specific timestamp
-sel_temp_hm <- temp_hm %>%
-  filter(chour == 468949) %>%
-  group_by(stationname) %>%
-  slice(1) %>%  # Optional: in case multiple rows match per group
-  ungroup()
-
-# Plot selected data
-plot(sel_temp_hm$mh_temp,
-     pch = 21,                     
-     col = "black",              
-     bg = "grey",               
-     cex = 1.4,               
-     main = paste("Hourly Mean Temperature at 31 Stations\n( Timestamp:", unique(sel_temp_hm$hour),")"),
-     xlab = "Station Index",
-     ylab = "Mean Temperature (°C)",
-     ylim = range(sel_temp_hm$mh_temp) + c(-0.5, 0.5),
-     las = 1,                     
-     bty = "l"                     
-)
-grid()
-```
-
-------------------------------------------------------------------------
-
 ```{r Load and pre-process environmental covariates}
 # Load the elevation data
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
@@ -134,7 +100,7 @@ dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 dem <- terra::project(dem, "EPSG:32632")
 
 # Load the elevation data
-tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
 
 # Mask out all values which are assigned to water and have value 101
 # Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
@@ -147,7 +113,7 @@ tch <- terra::project(tch, "EPSG:32632")
 crs(tch) == crs(dem)
 
 # Load the elevation data
-ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 
 # Reproject the elevation data to match correct CRS
 ghs_bh <- terra::project(ghs_bh, "EPSG:32632")
@@ -283,9 +249,6 @@ dev.off()
 png("../plots/building_height.png", width = 2000, height = 1600, res = 300)
 print(p3)
 dev.off()
-
-# If needed 
-#   spplot(grids_sp["dwater"], main = "Proximity to Water [m]", col.regions = terrain.colors(100)),
 ```
 
 ------------------------------------------------------------------------
