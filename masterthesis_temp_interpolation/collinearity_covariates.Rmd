@@ -320,7 +320,7 @@ str(temp_clean_station_hm_cov)
 
 ------------------------------------------------------------------------
 
-Calculate correlation between the three covariates and the dependent variable temperature
+Calculate correlation between the three covariates and the dependent variable temperature using a linear regression model
 
 ```{r Calculate correlation between the three covariates and the dependent variable temperature}
 
@@ -369,6 +369,49 @@ p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
 # Save output to file
 ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 4, dpi = 300)
 ```
+
+------------------------------------------------------------------------
+
+Calculate correlation between the three covariates and the dependent variable temperature using a GAM model
+
+```{r}
+p_corr_temp_cov_gam <- ggplot(station_long, aes(x = value, y = mean_temp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 5), 
+              se = TRUE, color = "darkblue") +
+  facet_wrap(~ covariate, scales = "free_x", nrow = 1,
+             labeller = labeller(
+               covariate = c(elevation = "Elevation [m]",
+                             canopy_height = "Canopy Height [m]",
+                             building_height = "Building Height [m]")
+             )) +
+  scale_y_continuous(limits = c(9, 15)) +
+  labs(title = "Yearly Mean Temperature per Station vs Environmental Covariates (GAM fit)",
+       x = NULL, y = "Mean Temperature [°C]") +
+  theme_bw() +
+  theme(strip.text = element_text(face = "bold"))
+
+p_corr_temp_cov_gam
+```
+
+------------------------------------------------------------------------
+
+Comparison between linear and non-linear model
+
+```{r}
+# Elevation
+lm(mean_temp ~ elevation, data = station_df)
+gam(mean_temp ~ s(elevation, k = 5), data = station_df)
+
+# Building height
+lm(mean_temp ~ building_height, data = station_df)
+gam(mean_temp ~ s(building_height, k = 5), data = station_df)
+
+# Canopy height
+lm(mean_temp ~ canopy_height, data = station_df)
+gam(mean_temp ~ s(canopy_height, k = 5), data = station_df)
+```
+
 
 ------------------------------------------------------------------------
 
