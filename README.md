@@ -24,3 +24,7 @@ Finally, the thesis will examine the influence of data quality and spatial distr
 As an outlook, the developed approach will be tested in additional German cities using DWD climate stations as the source of temperature data. The goal is to assess whether the method performs reliably in different urban contexts. A particularly promising outcome would be the ability to accurately estimate temperature surfaces in areas with minimal observational data, including cities that have only a single reference station. Such results would underscore the value of this method for broad-scale, data-scarce climate applications.
 
 A backup of the used datasets can be found on Drive.
+
+## First draft of the workflow
+
+![Regression Kriging Workflow](plots/regression_kriging_workflow.png)
