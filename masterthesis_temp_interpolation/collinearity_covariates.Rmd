@@ -383,28 +383,28 @@ print(corr_p)
 print("Spearman correlation:")
 print(corr_s)
 
-# Scatter plots
-ggplot(station_df, aes(x = elevation, y = mean_temp)) +
-  geom_point(alpha = 0.6) +
-  geom_smooth(method = "lm", se = TRUE, color = "red") +
-  labs(title = "Temperature vs Elevation",
-       subtitle = "Yearly mean per station",
-       x = "Elevation [m]",
-       y = "Mean Temperature [°C]")
+# reshape to long format
+station_long <- station_df %>%
+  pivot_longer(cols = c(elevation, canopy_height, building_height),
+               names_to = "covariate", values_to = "value")
 
-ggplot(station_df, aes(x = canopy_height, y = mean_temp)) +
+p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
   geom_point(alpha = 0.6) +
-  geom_smooth(method = "lm", se = TRUE, color = "blue") +
-  labs(title = "Temperature vs Canopy Height",
-       subtitle = "Yearly mean per station",
-       x = "Elevation (m)",
-       y = "Mean Temperature (°C)")
+  geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  facet_wrap(~ covariate, scales = "free_x", nrow = 1,
+             labeller = labeller(
+               covariate = c(elevation = "Elevation [m]",
+                             canopy_height = "Canopy Height [m]",
+                             building_height = "Building Height [m]")
+             )) +
+  scale_y_continuous(limits = c(9, 15)) +
+  labs(title = "Yearly Mean Temperature per Station vs Environmental Covariates",
+       x = NULL, y = "Mean Temperature [°C]") +
+  theme_bw() +
+  theme(strip.text = element_text(face = "bold"))
 
-ggplot(station_df, aes(x = building_height, y = mean_temp)) +
-  geom_point(alpha = 0.6) +
-  geom_smooth(method = "lm", se = TRUE, color = "darkgreen") +
-  labs(title = "Temperature vs Building Height",
-       subtitle = "Yearly mean per station")
+# Save output to file
+ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 4, dpi = 300)
 ```
 
 ------------------------------------------------------------------------
