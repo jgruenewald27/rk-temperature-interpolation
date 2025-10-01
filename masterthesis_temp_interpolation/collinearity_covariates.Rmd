@@ -357,6 +357,58 @@ str(temp_clean_station_hm_cov)
 
 ------------------------------------------------------------------------
 
+Calculate correlation between the three covariates and the dependent variable temperature
+
+```{r Calculate correlation between the three covariates and the dependent variable temperature}
+
+# Pick relevant columns
+df <- temp_clean_station_hm_cov %>%
+  st_drop_geometry() %>%   # remove geometry column
+  dplyr::select(entity_id, hm_temp, elevation, canopy_height, building_height)
+
+# Aggregate temperature per station (mean across time)
+station_df <- df %>%
+  group_by(entity_id, elevation, canopy_height, building_height) %>%
+  summarise(mean_temp = mean(hm_temp, na.rm = TRUE), .groups = "drop")
+
+# Compute correlation matrix (Pearson + Spearman)
+vars <- c("mean_temp", "elevation", "canopy_height", "building_height")
+
+corr_p <- cor(station_df[vars], use = "pairwise.complete.obs", method = "pearson")
+corr_s <- cor(station_df[vars], use = "pairwise.complete.obs", method = "spearman")
+
+print("Pearson correlation:")
+print(corr_p)
+
+print("Spearman correlation:")
+print(corr_s)
+
+# Scatter plots
+ggplot(station_df, aes(x = elevation, y = mean_temp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "red") +
+  labs(title = "Temperature vs Elevation",
+       subtitle = "Yearly mean per station",
+       x = "Elevation [m]",
+       y = "Mean Temperature [°C]")
+
+ggplot(station_df, aes(x = canopy_height, y = mean_temp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  labs(title = "Temperature vs Canopy Height",
+       subtitle = "Yearly mean per station",
+       x = "Elevation (m)",
+       y = "Mean Temperature (°C)")
+
+ggplot(station_df, aes(x = building_height, y = mean_temp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkgreen") +
+  labs(title = "Temperature vs Building Height",
+       subtitle = "Yearly mean per station")
+```
+
+------------------------------------------------------------------------
+
 Multicollinearity
 
 Test for simple Linear Regression Model
