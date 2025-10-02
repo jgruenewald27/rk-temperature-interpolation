@@ -567,35 +567,6 @@ cv_metrics <- cv_metrics %>%
     hour = hour(datetime_calc)
   )
 
-cv_metrics
-
-# Reshape to long format for easy plotting
-cv_metrics_long <- cv_metrics %>%
-  pivot_longer(cols = c(cv_rmse, cv_mae, cv_bias),
-               names_to = "metric",
-               values_to = "value")
-
-# Plot metrics over timestamp
-ggplot(cv_metrics_long, aes(x = timestamp, y = value, color = metric)) +
-  geom_line(size = 1) +
-  geom_point(size = 2) +
-  theme_minimal(base_size = 14) +
-  labs(title = "Cross-Validation Metrics over Time",
-       x = "Timestamp",
-       y = "Value",
-       color = "Metric") +
-  theme(legend.position = "top")
-```
-
-```{r}
-
-# Add date (day only) and hour-of-day
-cv_metrics <- cv_metrics %>%
-  mutate(
-    date = as.Date(datetime_calc),
-    hour = hour(datetime_calc)   # optional, if you want x-axis to be 0–23
-  )
-
 # Reshape to long format
 cv_metrics_long <- cv_metrics %>%
   pivot_longer(cols = c(cv_rmse, cv_mae),
@@ -606,12 +577,12 @@ cv_metrics_long <- cv_metrics %>%
 df_plot <- cv_metrics_long %>%
   filter(year(date) == 2023)
 
-ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
   geom_line(linewidth = 1) +
   geom_point(size = 1.8) +
   facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  scale_color_manual(values = c("cv_rmse" = "#1f77b4",
-                                "cv_mae"  = "#ff7f0e"),
+  scale_color_manual(values = c("cv_rmse" = "#6699CC",
+                                "cv_mae"  = "#CC6677"),
                      labels = c("cv_rmse" = "RMSE",
                                 "cv_mae"  = "MAE")) +
   labs(
@@ -629,7 +600,10 @@ ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
     strip.text = element_text(face = "bold")
   )
 
+p_cv
 
+# Save the plot
+ggsave("../plots/cv_metrics_by_day.png", plot = p_cv, width = 12, height = 8, dpi = 300)
 ```
 
 
