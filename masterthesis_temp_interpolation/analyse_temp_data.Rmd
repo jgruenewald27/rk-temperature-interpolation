@@ -260,8 +260,93 @@ ggsave(
 
 --------------------------------------------------------------------------------
 
-Calculate hourly mean temperature
-```{r}
+```{r Calculate monthly mean temp}
+
+temp_monthly_2023 <- temp_clean_station %>%
+  # restrict to year 2023
+  filter(year(dateobserved) == 2023) %>%
+  # collapse to month
+  mutate(month = floor_date(dateobserved, "month")) %>%
+  group_by(month) %>%
+  summarise(
+    mean_temp = mean(temperature, na.rm = TRUE),
+    sd_temp   = sd(temperature, na.rm = TRUE),
+    n_obs     = n(),   # number of readings contributing
+    .groups   = "drop"
+  )
+
+p_mean <- ggplot(temp_monthly_2023, aes(x = month, y = mean_temp)) +
+  # line + points
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(aes(color = mean_temp), size = 4) +
+  
+  # color scale (blue for cold, red for hot)
+  scale_color_gradient(low = "blue", high = "red") +
+  
+  # x-axis: month abbreviations
+  scale_x_date(
+    date_labels = "%b",
+    breaks = "1 month"
+  ) +
+  
+  # y-axis label
+  labs(
+    title = "Monthly Mean Temperatures (2023)",
+    subtitle = "Across all weather stations in Heidelberg",
+    x = "Month",
+    y = "Mean Temperature (°C)",
+    color = "Mean Temp"
+  ) +
+  
+  # theme adjustments
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "grey30"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+# Save mean plot
+ggsave("../plots/monthly_mean_temperatures_2023.png", p_mean, width = 8, height = 5, dpi = 300)
+
+p_sd <- ggplot(temp_monthly_2023, aes(x = month, y = sd_temp)) +
+  geom_line(color = "darkorange", linewidth = 1) +
+  geom_point(aes(color = sd_temp), size = 4) +
+  
+  # color scale (low = stable, high = variable)
+  scale_color_gradient(low = "lightblue", high = "darkred") +
+  
+  # x-axis formatting
+  scale_x_date(
+    date_labels = "%b",
+    breaks = "1 month"
+  ) +
+  
+  labs(
+    title = "Monthly Temperature Variability (2023)",
+    subtitle = "Standard deviation across all weather stations in Heidelberg",
+    x = "Month",
+    y = "Standard Deviation (°C)",
+    color = "SD"
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "grey30"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+# Save SD plot
+ggsave("../plots/monthly_sd_temperatures_2023.png", p_sd, width = 8, height = 5, dpi = 300)
+```
+
+
+--------------------------------------------------------------------------------
+
+```{r Calculate hourly mean temp}
 
 # Calculate hourly mean temp for cleaned data
 temp_clean_station_hm <- temp_clean_station %>%
