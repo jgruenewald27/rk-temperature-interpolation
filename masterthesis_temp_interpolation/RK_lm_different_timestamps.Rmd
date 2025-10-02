@@ -557,6 +557,18 @@ Plot to analyse model performance metrices
 # Read CSV
 cv_metrics <- read.csv("../rk_results_testweek/cross_validation_metrics.csv")
 
+cv_metrics <- cv_metrics %>%
+  mutate(
+    # Rückrechnung von Stunden seit 1970-01-01
+    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    
+    # Zusätzliche Helferspalten
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)
+  )
+
+cv_metrics
+
 # Reshape to long format for easy plotting
 cv_metrics_long <- cv_metrics %>%
   pivot_longer(cols = c(cv_rmse, cv_mae, cv_bias),
@@ -574,6 +586,52 @@ ggplot(cv_metrics_long, aes(x = timestamp, y = value, color = metric)) +
        color = "Metric") +
   theme(legend.position = "top")
 ```
+
+```{r}
+
+# Add date (day only) and hour-of-day
+cv_metrics <- cv_metrics %>%
+  mutate(
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)   # optional, if you want x-axis to be 0–23
+  )
+
+# Reshape to long format
+cv_metrics_long <- cv_metrics %>%
+  pivot_longer(cols = c(cv_rmse, cv_mae),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter nur 2023
+df_plot <- cv_metrics_long %>%
+  filter(year(date) == 2023)
+
+ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
+  scale_color_manual(values = c("cv_rmse" = "#1f77b4",
+                                "cv_mae"  = "#ff7f0e"),
+                     labels = c("cv_rmse" = "RMSE",
+                                "cv_mae"  = "MAE")) +
+  labs(
+    title = "Leave-One-Out Cross-Validation Metrics of the Regression-Kriging Model (by Day)",
+    subtitle = "Hourly values of RMSE and MAE",
+    x = "Hour of Day",
+    y = "Metric Value",
+    color = "Metric"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text = element_text(face = "bold")
+  )
+
+
+```
+
 
 
 ```{r Analyse RK metrics}
