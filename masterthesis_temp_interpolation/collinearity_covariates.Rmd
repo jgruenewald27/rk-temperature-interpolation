@@ -602,34 +602,7 @@ for (one_day in all_days) {
 
 ```
 
-
 ------------------------------------------------------------------------
-
-```{r}
-# --- 1) Quick diagnostic panel (includes residuals vs fitted & scale-location) ---
-par(mfrow = c(2, 2))
-plot(mlr_coll)          # 1: Residuals vs Fitted, 2: QQ, 3: Scale-Location, 4: Residuals vs Leverage
-par(mfrow = c(1, 1))
-
-# --- 2) Focused residuals vs fitted (studentized) ---
-res_std <- rstudent(mlr_coll)
-fit     <- fitted(mlr_coll)
-plot(fit, res_std, pch=20, xlab="Fitted values", ylab="Studentized residuals")
-abline(h = 0, col = "red", lwd = 2)
-# add a smooth to spot patterns
-lines(lowess(fit, res_std), col = "blue", lwd = 2)
-
-# --- 3) Formal homoscedasticity tests ---
-library(lmtest)
-library(car)
-
-bptest(mlr_coll)                               # Breusch–Pagan (generic heteroskedasticity)
-ncvTest(mlr_coll)                              # Car's non-constant variance score test
-# White-style test (variance depends on fitted & fitted^2)
-bptest(mlr_coll, ~ fit + I(fit^2))
-```
-
-
 
 GAM for all three covariates
 
