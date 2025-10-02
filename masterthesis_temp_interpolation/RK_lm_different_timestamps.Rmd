@@ -216,7 +216,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # ================================================
 
 # Get unique timestamps
-timestamps <- unique(temp_clean_station_hm$chour)[1:168]  # Test with first 3 unique chour timestamps
+timestamps <- unique(temp_clean_station_hm$chour)[1:168]  
 
 # Counters + progress bar
 total     <- length(timestamps)                       
@@ -551,7 +551,7 @@ if (exists("rk_metrics_all")) {
 
 ------------------------------------------------------------------------
 
-Plot to analyse model performance metrices
+Plots to analyse model performance metrices
 
 ```{r Analyse CV metrics}
 # Read CSV
@@ -605,8 +605,6 @@ p_cv
 # Save the plot
 ggsave("../plots/cv_metrics_by_day.png", plot = p_cv, width = 12, height = 8, dpi = 300)
 ```
-
-
 
 ```{r Analyse RK metrics}
 
