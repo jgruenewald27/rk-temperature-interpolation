@@ -53,6 +53,9 @@ library(car)
 # DATA LOADING, CLEANING, AND COVARIATE PREPARATION
 # ================================================
 
+# consistent timezone for the whole script
+tz_berlin <- "Europe/Berlin"
+
 # Read temperature data for the entire year of 2023
 temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
 
@@ -176,8 +179,8 @@ locs <- as.data.frame(locs)
 
 # Keep only one row per station and select relevant columns
 station_coords <- locs %>%
-  dplyr::distinct(stationname, .keep_all = TRUE) %>%
-  dplyr::select(stationname, X, Y)
+  dplyr::distinct(entity_id, .keep_all = TRUE) %>%
+  dplyr::select(entity_id, X, Y)
 
 coordinates(station_coords) <- ~ X + Y
 proj4string(station_coords) <- CRS(proj4string(grids_sp))
@@ -253,7 +256,7 @@ for (i in seq_along(timestamps)) {
   
   # Generate line plot showing hourly mean temperature for each station
   # across the time range covered so far in the loop
-  p_all <- ggplot(all_temp_data, aes(x = hour, y = mh_temp, color = stationname, group = stationname)) +  
+  p_all <- ggplot(all_temp_data, aes(x = hour, y = hm_temp, color = entity_id, group = entity_id)) +  
     geom_line() +
     geom_point(size = 1) +
     labs(title = "Hourly Mean Temperature at Each Station",        
@@ -290,7 +293,7 @@ for (i in seq_along(timestamps)) {
   # ------------------------------------------------
   
   # Fit linear model
-  lm.temp_shm <- lm(mh_temp ~ elevation + canopy_height + building_heigt, data = temp_shm.ex)
+  lm.temp_shm <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
   summary_lm <- summary(lm.temp_shm)
   
   # Extract model metrics
@@ -465,11 +468,11 @@ for (i in seq_along(timestamps)) {
   rk_at_obs <- sp::over(obs_stations, grids_sp)
   
   # Combine predictions with observations
-  rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$mh_temp)
+  rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$hm_temp)
 
   # Check if predicted and observed data match in length
   cat("Predicted rows:", nrow(rk_at_obs), "\n")
-  cat("Observed rows :", length(temp_shm.sf$mh_temp), "\n")
+  cat("Observed rows :", length(temp_shm.sf$hm_temp), "\n")
   
   # Calculate prediction error
   rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
