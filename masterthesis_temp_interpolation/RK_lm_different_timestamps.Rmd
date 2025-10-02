@@ -11,6 +11,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r Load Required Libraries}
 
+# Load Required Libraries
+
 # Spatial Data Handling & Processing
 library(sf)
 library(sp)
@@ -28,19 +30,19 @@ library(mgcv)
 
 # Data Manipulation & Wrangling
 library(tidyverse)
-library(dplyr)
-library(lubridate)
 
 # Data Visualization
 library(ggplot2)
 library(scales)
 library(gridExtra)
+library(corrplot)
 
 # Mapping & Interactive Visualization
 library(tmap)
 
 # Additional
 library(lattice)
+library(car)
 ```
 
 --------------------------------------------------------------------------------
@@ -51,70 +53,74 @@ library(lattice)
 # DATA LOADING, CLEANING, AND COVARIATE PREPARATION
 # ================================================
 
-# consistent timezone for the whole script
-tz_berlin <- "Europe/Berlin"
-
-# Read temperature data
-temp <- sf::read_sf('../data/temp_HD/sensor_data_20230105_31days.gpkg')
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
 
 # Removes rows where temp is NA
-temp <- temp[!is.na(temp$temperature), ] 
+temp <- temp %>% filter(!is.na(temperature))
 
 # Reproject the data for Germany
 temp <- st_transform(temp, crs="EPSG:32632")
 
-# ★ CHANGED: create a local-hour bucket (DST-safe) and then a stable integer key (UTC hours)
-temp <- temp %>%
-  mutate(
-    hour_local = floor_date(dateobserved, unit = "hour"),                       
-    chour      = as.integer(as.numeric(with_tz(hour_local, "UTC")) / 3600)      
-  )
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
 
 # Calculate hour count since epoch, rounded down to current hour
-temp$chour <- floor(as.numeric(temp$dateobserved) / 3600)
+temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
 
-# ★ CHANGED: test conversion using helper formatting (defined later). If running here, keep a simple check:
-if (length(temp$chour) >= 66163) {
-  print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = tz_berlin), "%Y-%m-%d %H:%M:%S %Z"))
-}
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
 
-# Test the results
-# print(format(as.POSIXct(temp$chour[66163] * 3600, origin = "1970-01-01", tz = "Europe/Berlin"), "%Y-%m-%d %H:%M:%S %Z"))
+# Check if exactly 4 stations were dropped
+length(unique(na.omit(temp_clean$entity_id)))
+length(unique(na.omit(temp_clean_station$entity_id)))
 
-# Calculate mean temperature for each station and hour during July using local hour
-temp_hm <- temp %>%
-  filter(month(dateobserved) == 7) %>% 
-  group_by(stationname, hour_local, chour) %>%
-  summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
-  mutate(hour = hour_local)
+# Calculate hourly mean temp for cleaned data
+temp_clean_station_hm <- temp_clean_station %>%
+    group_by(entity_id, chour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 
-# Load elevation data
+# Read admin boundaries of HD
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+
+# Load the elevation data
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
 dem <- terra::project(dem, y = crs(temp))
 
-# Load Tree Canopy Height
-tch <- terra::rast("../data/Canopy_height/clip_Forest_height_2019_NAFR.tif")
+# Load the elevation data
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
 
 # Mask out all values which are assigned to water and have value 101
 # Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
 tch[tch == 101] <- NA
 
-# Reproject the canopy height data to match correct CRS
+# Reproject the elevation data to match correct CRS
 tch <- terra::project(tch, y = crs(temp))
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
 
-# Load Building Height data
-ghs_bh <- terra::rast("../data/building_height/clip_GHS_BUILT_H_AGBH_E2018_GLOBE_R2023A_54009_100_V1_0_R4_C19.tif")
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 
-# Reproject the building height data to match correct CRS
+# Reproject the elevation data to match correct CRS
 ghs_bh <- terra::project(ghs_bh, y = crs(temp))
 
 # Check if CRS is correct
 crs(ghs_bh) == crs(dem)
+
+
 
 # Create a Raster Stack for all the covariate information
 
@@ -131,7 +137,7 @@ ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
 env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
 
 # Rename layers for clarity
-names(env_stack) <- c("elev", "canopy", "bldg")
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
 
 # Also add lat and lon to the raster stack
 # Create coordinate rasters
@@ -207,7 +213,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # ================================================
 
 # Get unique timestamps
-timestamps <- unique(temp_hm$chour)[1:168]  # Test with first 3 unique chour timestamps
+timestamps <- unique(temp_clean_station_hm$chour)[1:168]  # Test with first 3 unique chour timestamps
 
 # Counters + progress bar
 total     <- length(timestamps)                       
@@ -232,7 +238,7 @@ for (i in seq_along(timestamps)) {
   # ------------------------------------------------
   
   # Select temperature data for the current hour
-  sel_temp_hm <- temp_hm %>%
+  sel_temp_hm <- temp_clean_station_hm %>%
     filter(chour == ts)
   
   # Skip if fewer than 20 data points for current hour
@@ -284,7 +290,7 @@ for (i in seq_along(timestamps)) {
   # ------------------------------------------------
   
   # Fit linear model
-  lm.temp_shm <- lm(mh_temp ~ elev + canopy + bldg, data = temp_shm.ex)
+  lm.temp_shm <- lm(mh_temp ~ elevation + canopy_height + building_heigt, data = temp_shm.ex)
   summary_lm <- summary(lm.temp_shm)
   
   # Extract model metrics
