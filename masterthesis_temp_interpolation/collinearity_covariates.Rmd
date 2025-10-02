@@ -440,6 +440,8 @@ Source: https://www.statology.org/multicollinearity-in-r/
 #define multiple linear regression model
 mlr_coll <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_clean_station_hm_cov)
 
+mlr_coll
+
 #calculate the VIF for each predictor variable in the model
 vif(mlr_coll)
 ```
@@ -454,10 +456,10 @@ THE FURTHER APPROACH
 
 CALCULATE THIS FOR THE LINEAR AND NON-LINEAR MODEL
 
-```{r Calculate Morans I on regression residuals}
+```{r Calculate Morans I on regression residuals for single day}
 
 # Pick one day
-one_day <- as.Date("2023-07-01")
+one_day <- as.Date("2023-07-07")
 
 # Filter to that day (keep sf)
 df_day <- temp_clean_station_hm_cov %>%
@@ -469,41 +471,135 @@ moran_results <- df_day %>%
   group_split(hour) %>%
   map_dfr(function(df_slice) {
     
-    # Extract coords
+    # extract coords
     xy <- st_coordinates(df_slice)
     
-    # Build neighbors and weights
+    # neighbors + weights
     knn <- knearneigh(xy, k = 8)
     nb  <- knn2nb(knn)
     lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
     
-    # Run Moran's I asymptotic test
+    # asymptotic test
     mt <- moran.test(df_slice$residuals, lw, zero.policy = TRUE)
     
-    # Run Monte Carlo permutation test
+    # Monte Carlo test
     mc <- moran.mc(df_slice$residuals, lw, nsim = 999, zero.policy = TRUE)
+    
+    # 95% envelope from permutation distribution
+    q <- quantile(mc$res, c(0.025, 0.975))
     
     tibble(
       hour     = unique(df_slice$hour),
       moran_i  = mt$estimate[["Moran I statistic"]],
       expected = mt$estimate[["Expectation"]],
       p_asym   = mt$p.value,
-      p_mc     = mc$p.value
+      p_mc     = mc$p.value,
+      lo95     = q[1],
+      hi95     = q[2]
     )
   })
 
 moran_results
 
+# assign plot to an object
+p_moran <- ggplot(moran_results, aes(x = hour, y = moran_i, group = 1)) +
+  geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "grey80", alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_hline(yintercept = unique(moran_results$expected), linetype = "dotted") +
+  geom_line(color = "black") +
+  geom_point(aes(color = p_mc < 0.05), size = 2) +
+  labs(
+    title = "Moran's I of Regression Residuals",
+    subtitle = "Dashed = 0; dotted = expectation under null; grey band = 95% envelope",
+    x = "Hour of Day",
+    y = "Moran's I",
+    color = "Permutation Test (p < 0.05)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.subtitle = element_text(size = 10)
+  )
+
+p_moran
+
+# save as PNG
+#ggsave("../plots/moransI_residuals_2023-07-07.png", p_moran, width = 8, height = 5, dpi = 300)
 ```
 
-```{r}
-ggplot(moran_results, aes(x = hour, y = moran_i)) +
-  geom_line() +
-  geom_point(aes(color = p_mc < 0.05)) +  # color points if MC test is significant
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(title = "Moran's I (Asymptotic & Monte Carlo) over July 1, 2023",
-       x = "Time", y = "Moran's I") +
-  theme_minimal()
+```{r Loop to calculate Morans I on regression residuals}
+
+# Define the month you want to process
+month_start <- as.Date("2023-07-01")
+month_end   <- as.Date("2023-07-31")
+
+# Generate all dates in that range
+all_days <- seq(month_start, month_end, by = "day")
+
+# Loop across days
+for (one_day in all_days) {
+  message("Processing ", one_day)
+
+  # Filter to that day (keep sf)
+  df_day <- temp_clean_station_hm_cov %>%
+    filter(as.Date(hour) == one_day) %>%
+    st_as_sf()
+
+  # Skip if no data for that day
+  if (nrow(df_day) == 0) next
+
+  # Run Moran’s I at each timestamp
+  moran_results <- df_day %>%
+    group_split(hour) %>%
+    map_dfr(function(df_slice) {
+      
+      xy <- st_coordinates(df_slice)
+      
+      knn <- knearneigh(xy, k = 8)
+      nb  <- knn2nb(knn)
+      lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+      
+      mt <- moran.test(df_slice$residuals, lw, zero.policy = TRUE)
+      mc <- moran.mc(df_slice$residuals, lw, nsim = 999, zero.policy = TRUE)
+      
+      q <- quantile(mc$res, c(0.025, 0.975))
+      
+      tibble(
+        hour     = unique(df_slice$hour),
+        moran_i  = mt$estimate[["Moran I statistic"]],
+        expected = mt$estimate[["Expectation"]],
+        p_asym   = mt$p.value,
+        p_mc     = mc$p.value,
+        lo95     = q[1],
+        hi95     = q[2]
+      )
+    })
+
+  # Build plot
+  p_moran <- ggplot(moran_results, aes(x = hour, y = moran_i, group = 1)) +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "grey80", alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_hline(yintercept = unique(moran_results$expected), linetype = "dotted") +
+    geom_line(color = "black") +
+    geom_point(aes(color = p_mc < 0.05), size = 2) +
+    labs(
+      title = "Moran's I of Regression Residuals",
+      subtitle = paste("Day:", one_day, "| Dashed = 0; dotted = expectation; grey band = 95% envelope"),
+      x = "Hour of Day",
+      y = "Moran's I",
+      color = "Permutation Test (p < 0.05)"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.subtitle = element_text(size = 10)
+    )
+
+  # Save plot with date in filename
+  out_file <- paste0("../plots/moransI_residuals/moransI_residuals_", one_day, ".png")
+  ggsave(out_file, p_moran, width = 8, height = 5, dpi = 300)
+}
+
 ```
 
 
