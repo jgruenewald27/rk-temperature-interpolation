@@ -553,9 +553,9 @@ if (exists("rk_metrics_all")) {
 
 Plot to analyse model performance metrices
 
-```{r}
+```{r Analyse CV metrics}
 # Read CSV
-cv_metrics <- read.csv("../rk_results/cross_validation_metrics.csv")
+cv_metrics <- read.csv("../rk_results_testweek/cross_validation_metrics.csv")
 
 # Reshape to long format for easy plotting
 cv_metrics_long <- cv_metrics %>%
@@ -569,6 +569,29 @@ ggplot(cv_metrics_long, aes(x = timestamp, y = value, color = metric)) +
   geom_point(size = 2) +
   theme_minimal(base_size = 14) +
   labs(title = "Cross-Validation Metrics over Time",
+       x = "Timestamp",
+       y = "Value",
+       color = "Metric") +
+  theme(legend.position = "top")
+```
+
+
+```{r Analyse RK metrics}
+# Read CSV
+rk_metrics <- read.csv("../rk_results_testweek/rk_metrics.csv")
+
+# Reshape to long format for easy plotting
+rk_metrics_long <- rk_metrics %>%
+  pivot_longer(cols = c(rk_rmse, rk_mae, rk_bias),
+               names_to = "metric",
+               values_to = "value")
+
+# Plot metrics over timestamp
+ggplot(rk_metrics_long, aes(x = timestamp, y = value, color = metric)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Regression-Kriging Metrics over Time",
        x = "Timestamp",
        y = "Value",
        color = "Metric") +
