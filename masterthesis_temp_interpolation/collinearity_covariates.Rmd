@@ -449,28 +449,61 @@ None of the predictors (elevation, canopy height, building height) show problema
 ------------------------------------------------------------------------
 
 CONTINUE WORKING HERE!!!
+UNDERSTAND IF RESIDUALS ARE SPATIALLY AUTOCORRELATED OR NOT -> OF GREAT IMPORTANCE TO 
+THE FURTHER APPROACH
+
+CALCULATE THIS FOR THE LINEAR AND NON-LINEAR MODEL
 
 ```{r Calculate Morans I on regression residuals}
 
-library(sf)
+# Pick one day
+one_day <- as.Date("2023-07-01")
 
-# Get geometry from lat and lon column and reproject to project
-sf_pts <- st_as_sf(temp_clean_station_hm_cov, coords = c("lon", "lat"), crs = 4326)
-sf_pts <- st_transform(sf_pts, 32632)
-crs(sf_pts)
+# Filter to that day (keep sf)
+df_day <- temp_clean_station_hm_cov %>%
+  filter(as.Date(hour) == one_day) %>%
+  st_as_sf()
 
-# 2) Residuals from your fitted model (same row order!)
-resid_lm <- residuals(mlr_coll)
+# Loop across each timestamp
+moran_results <- df_day %>%
+  group_split(hour) %>%
+  map_dfr(function(df_slice) {
+    
+    # Extract coords
+    xy <- st_coordinates(df_slice)
+    
+    # Build neighbors and weights
+    knn <- knearneigh(xy, k = 8)
+    nb  <- knn2nb(knn)
+    lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+    
+    # Run Moran's I asymptotic test
+    mt <- moran.test(df_slice$residuals, lw, zero.policy = TRUE)
+    
+    # Run Monte Carlo permutation test
+    mc <- moran.mc(df_slice$residuals, lw, nsim = 999, zero.policy = TRUE)
+    
+    tibble(
+      hour     = unique(df_slice$hour),
+      moran_i  = mt$estimate[["Moran I statistic"]],
+      expected = mt$estimate[["Expectation"]],
+      p_asym   = mt$p.value,
+      p_mc     = mc$p.value
+    )
+  })
 
-# 3) k-nearest neighbors (k = 8) and Moran's I
-knn <- knearneigh(xy, k = 8)
-nb  <- knn2nb(knn)
-lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+moran_results
 
-moran.test(resid_lm, lw, zero.policy = TRUE)          # asymptotic test
-moran.mc(resid_lm, lw, nsim = 999, zero.policy = TRUE) # permutation test
+```
 
-
+```{r}
+ggplot(moran_results, aes(x = hour, y = moran_i)) +
+  geom_line() +
+  geom_point(aes(color = p_mc < 0.05)) +  # color points if MC test is significant
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(title = "Moran's I (Asymptotic & Monte Carlo) over July 1, 2023",
+       x = "Time", y = "Moran's I") +
+  theme_minimal()
 ```
 
 
