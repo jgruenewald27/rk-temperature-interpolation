@@ -323,6 +323,10 @@ for (i in seq_along(timestamps)) {
   # Convert df into spatial object using existing geometry
   temp_shm.sf <- st_as_sf(temp_shm.ex)
   
+  # Convert MULTIPOINT geometries to POINT
+  temp_shm.sf <- temp_shm.sf |>
+    st_cast("POINT")
+  
   # ------------------------------------------------
   # STEP 4: Compute anisotropy & fit directional variogram
   # ------------------------------------------------
@@ -356,9 +360,9 @@ for (i in seq_along(timestamps)) {
   dev.off()
   
   # Compute directional variograms for North–South (0°) and East–West (90°)
-  rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha=c(0,90))
-  
-  # Fit theoretical exponential variogram model to the directional variograms
+  rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha = c(0, 45, 90, 135))
+
+  # Fit theoretical exponential variogram model to the directional variogram
   rvgm.temp <- fit.variogram(rv.temp,
       vgm(psill=var(temp_shm.sf$residuals),
           "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
@@ -370,8 +374,8 @@ for (i in seq_along(timestamps)) {
   png(file_varfit, width = 8, height = 6, units = "in", res = 300)
   print(
     plot(rv.temp, rvgm.temp,
-         main = paste0("Directional Variogram Fit (0° vs 90°)\n", dt_lab),   
-         plot.nu = FALSE, cex = 2, pch = "+", col = "black")
+         main = paste0("Directional Variogram Fit (0°, 45°, 90°, 135°)\n", dt_lab),   
+         plot.nu = FALSE, cex = 1.5, pch = "+", col = "black")
   )
   dev.off()
   
@@ -551,6 +555,10 @@ if (exists("rk_metrics_all")) {
   write.csv(rk_metrics_all, rk_file, row.names = FALSE)
 }
 ```
+```{r}
+str(temp_shm.sf)
+```
+
 
 ------------------------------------------------------------------------
 
