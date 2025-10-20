@@ -423,3 +423,32 @@ plot(rv.temp, rvgm.temp,
   plot.nu = FALSE, cex = 1.5, pch = "+", col = "black")
 ```
 
+```{r}
+# Define a gstat object for kriging using the fitted residual variogram
+  g.resid <- gstat(
+    id = c("residuals"),
+    formula = resid_oob ~ 1,
+    data = temp_shm.sf,
+    nmax = 31,
+    model = rvgm.temp
+  )
+  
+# Predict the temperature trend component using the regression model
+locTEMP.reg <- predict(rf_tuned, grids_sp)
+  
+# OK of the regression residuals to model spatial autocorrelation
+locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
+  
+# Combine the regression prediction with kriged residuals to get final RK predictions
+rk.pred <- locTEMP.reg + locTEMP$residuals.pred
+  
+# Add the RK predictions as a new variable to the spatial grid object
+grids_sp$rk_pred <- rk.pred
+
+# Plot RK results
+spplot(grids_sp, "rk_pred",
+  main = paste("Regression Kriging Prediction (°C)\n"),   
+  sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
+
+```
+
