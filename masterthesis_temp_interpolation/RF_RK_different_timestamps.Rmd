@@ -1,0 +1,344 @@
+---
+title: "RF_RK_different_timestamps"
+output: html_document
+date: "2025-10-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Libraries}
+
+# Load Required Libraries
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(caret)
+library(Metrics)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(corrplot)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
+
+
+```{r Load and preprocess data}
+
+# ================================================
+# DATA LOADING, CLEANING, AND COVARIATE PREPARATION
+# ================================================
+
+# consistent timezone for the whole script
+tz_berlin <- "Europe/Berlin"
+
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Calculate hour count since epoch, rounded down to current hour
+temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Check if exactly 4 stations were dropped
+length(unique(na.omit(temp_clean$entity_id)))
+length(unique(na.omit(temp_clean_station$entity_id)))
+
+# Calculate hourly mean temp for cleaned data
+# temp_clean_station_hm <- temp_clean_station %>%
+#     group_by(entity_id, chour) %>%
+#     summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+#     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+
+#Shortcut -> import pre-processed hourly means
+temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+
+# Read admin boundaries of HD
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+
+# Load the elevation data
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem, y = crs(temp))
+
+# Load the elevation data
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the elevation data to match correct CRS
+tch <- terra::project(tch, y = crs(temp))
+
+# Check if the two covariates have the same crs
+crs(tch) == crs(dem)
+
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, y = crs(temp))
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
+
+
+
+# Create a Raster Stack for all the covariate information
+
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
+
+# Also add lat and lon to the raster stack
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+
+# Extract coordinates of the measurement stations
+# maybe use them as covariates
+
+# Extract coordinates and data into a data frame
+coords <- st_coordinates(temp)
+locs <- cbind(temp, coords)
+locs <- as.data.frame(locs)
+
+# Keep only one row per station and select relevant columns
+station_coords <- locs %>%
+  dplyr::distinct(entity_id, .keep_all = TRUE) %>%
+  dplyr::select(entity_id, X, Y)
+
+coordinates(station_coords) <- ~ X + Y
+proj4string(station_coords) <- CRS(proj4string(grids_sp))
+```
+
+
+```{r}
+# Get unique timestamps
+timestamps <- unique(temp_clean_station_hm$chour)[1:3] 
+
+# Select temperature data for the current hour
+sel_temp_hm <- temp_clean_station_hm %>%
+    filter(chour == ts)
+
+  # Skip if fewer than 20 data points for current hour
+  if (nrow(sel_temp_hm) < 20) {                                 
+    skipped <- skipped + 1L                                       
+    cat("  → skipped (n < 20)\n")                          
+    next                                                         
+  }
+
+# Convert Spatial object to RasterBrick
+r_brick <- brick(grids_sp)
+  
+# Convert RasterBrick to terra SpatRaster object
+grid_terra <- rast(r_brick)
+  
+# Extract raster values at the point locations
+extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
+  
+# Remove the first column (ID)
+extracted_vals <- extracted_vals[,-1]
+  
+# Combine the point data with the extracted raster values
+temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
+
+# drop columns with lat and lon information
+temp_shm.ex <- temp_shm.ex %>% select(-c(lon, lat))
+
+# temp_shm.ex <- temp_shm.ex %>% select(-c(entity_id, chour, hour, geom))
+```
+
+
+```{r}
+# Build RF Model
+set.seed(42)
+
+# Split data into train and test 80/20
+trainIndex <- sample(1:nrow(temp_shm.ex), 0.8 * nrow(temp_shm.ex))
+
+trainData <- temp_shm.ex[trainIndex, ]
+testData <- temp_shm.ex[-trainIndex, ]
+
+# Run test model to analyse performance
+rf_model <- randomForest(hm_temp ~ elevation + canopy_height + building_height, data = trainData, ntree = 1000, mtry = 1)
+print(rf_model)
+```
+
+```{r}
+# importance(rf_model)
+# varImpPlot(rf_model)
+
+# Tune optimal number of predictor variables (mtry)
+mtry <- tuneRF(trainData[, c(6, 7, 8)],trainData$hm_temp, ntreeTry=500,
+               stepFactor=1.5,improve=0.01, mtryStart = 1, trace=TRUE, plot=TRUE)
+
+# store best mtry
+best.m <- mtry[mtry[, 2] == min(mtry[, 2]), 1]
+print(mtry)
+print(best.m)
+```
+
+```{r}
+# Insert best results in RF Model and run tuned model
+rf_tuned <- randomForest(hm_temp ~ elevation + canopy_height + building_height, data = trainData, ntree = 1000, mtry = best.m)
+print(rf_model)
+```
+
+```{r}
+# Run predictions on test data
+predictions <- predict(rf_tuned, testData)
+
+# Performance metrices
+rmse_val <- rmse(testData$hm_temp, predictions)
+mae_val  <- mae(testData$hm_temp, predictions)
+r2_val   <- cor(testData$hm_temp, predictions)^2
+
+cat("RMSE:", rmse_val, "\nMAE:", mae_val, "\nR²:", r2_val, "\n")
+```
+
+```{r}
+# extract out-of-bag residuals from tuned RF model
+residuals_oob <- trainData$hm_temp - rf_tuned$predicted
+trainData$resid_oob <- residuals_oob
+
+# plot(trainData$resid_oob)
+
+# Convert df into spatial object using existing geometry
+temp_shm.sf <- st_as_sf(trainData)
+  
+# Convert MULTIPOINT geometries to POINT
+temp_shm.sf <- temp_shm.sf |>
+  st_cast("POINT")
+```
+
+```{r}
+# Compute empirical variogram map of model residuals
+  # This helps visualize spatial autocorrelation in all directions
+  varmap <- variogram(resid_oob ~ 1, data = temp_shm.sf, map = TRUE,
+                    # cutoff is half the spatial extent (or diameter) of the study area
+                    cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
+                    # scaled relative to the resolution of the grid
+                    width = 30 * grids_sp@grid@cellsize[1])
+
+  # Store cutoff and bin width values for reuse and labeling
+  cutoff_val <- sqrt(areaSpatialGrid(grids_sp)) / 2
+  width_val  <- 30 * grids_sp@grid@cellsize[1]
+  
+  # Report how many rows are in variogram map
+  cat("Variogram map has", nrow(as.data.frame(varmap)), "rows\n")
+  
+  varmap
+  
+  # Define output filename for the variogram map plot
+  # file_varmap <- file.path(variogram_dir, paste0(dt_file, "_variogram_map.png"))  
+  
+  # Plot and save the directional variogram map
+  # png(file_varmap, width = 8, height = 6, units = "in", res = 300)
+  # print(
+  plot(varmap,
+         col.regions = grey(rev(seq(0, 1, 0.025))),
+         main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)\n%s",  
+                        cutoff_val / 1000, width_val / 1000))
+  )
+  # dev.off()
+  
+  # Compute directional variograms for North–South (0°) and East–West (90°)
+  rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha = c(0, 45, 90, 135))
+
+  # Fit theoretical exponential variogram model to the directional variogram
+  rvgm.temp <- fit.variogram(rv.temp,
+      vgm(psill=var(temp_shm.sf$residuals),
+          "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
+  
+  # Define output filename for directional variogram fit plot
+  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_directional_variogram_fit.png"))  
+ 
+  # Plot the empirical and fitted directional variograms and save
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(rv.temp, rvgm.temp,
+         main = paste0("Directional Variogram Fit (0°, 45°, 90°, 135°)\n", dt_lab),   
+         plot.nu = FALSE, cex = 1.5, pch = "+", col = "black")
+  )
+  dev.off()
+```
+
