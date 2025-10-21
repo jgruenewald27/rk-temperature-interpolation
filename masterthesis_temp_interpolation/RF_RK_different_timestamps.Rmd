@@ -452,3 +452,34 @@ spplot(grids_sp, "rk_pred",
 
 ```
 
+Evaluate model performance
+```{r}
+# Match station coordinates with observed stations only
+  obs_coords <- st_coordinates(temp_shm.sf)
+  
+  # Convert to SpatialPoints object with same CRS as prediction grid
+  obs_stations <- SpatialPoints(coords = obs_coords, proj4string = CRS(proj4string(grids_sp)))
+  
+  # Extract only at observed station locations
+  rk_at_obs <- sp::over(obs_stations, grids_sp)
+  
+  # Combine predictions with observations
+  rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$hm_temp)
+
+  # Check if predicted and observed data match in length
+  cat("Predicted rows:", nrow(rk_at_obs), "\n")
+  cat("Observed rows :", length(temp_shm.sf$hm_temp), "\n")
+  
+  # Calculate prediction error
+  rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
+  
+  # Calculate evaluation metrics for RK performance
+  rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
+  mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
+  bias <- mean(rk_eval$residual, na.rm = TRUE)
+  
+  cat("RK RMSE :", round(rmse, 2), "\n")
+  cat("RK MAE  :", round(mae, 2), "\n")
+  cat("RK Bias :", round(bias, 2), "\n")
+```
+
