@@ -584,27 +584,49 @@ cv_metrics_long <- cv_metrics %>%
 df_plot <- cv_metrics_long %>%
   filter(year(date) == 2023)
 
+# Plot: Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
 p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  geom_line(linewidth = 1) +
-  geom_point(size = 1.8) +
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  scale_color_manual(values = c("cv_rmse" = "#6699CC",
-                                "cv_mae"  = "#CC6677"),
-                     labels = c("cv_rmse" = "RMSE",
-                                "cv_mae"  = "MAE")) +
-  labs(
-    title = "Leave-One-Out Cross-Validation Metrics of the Regression-Kriging Model (by Day)",
-    subtitle = "Hourly values of RMSE and MAE",
-    x = "Hour of Day",
-    y = "Metric Value",
-    color = "Metric"
+  # Lines, reference line, and points
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
+    color = "grey60"
   ) +
+  geom_point(size = 1.8) +
+  # Facet by date
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
+  # Color and linetype scales
+  scale_color_manual(
+    values = c(
+      "cv_rmse" = "#6699CC",
+      "cv_mae"  = "#CC6677"
+    ),
+    labels = c(
+      "cv_rmse" = "Root Mean Square Error (RMSE)",
+      "cv_mae"  = "Mean Absolute Error (MAE)"
+    )
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Prediction (Error = 0)" = "dotted")
+  ) +
+  # Labels
+  labs(
+    title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
+    subtitle = "Hourly RMSE and MAE values from Leave-One-Out Cross-Validation of models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Error Metric [°C]",
+    color    = "Metrics"
+  ) +
+  # X-axis breaks
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  # Theme
   theme_minimal(base_size = 14) +
   theme(
-    legend.position = "top",
-    panel.grid.minor = element_blank(),
-    strip.background = element_rect(fill = "grey90", color = NA),
-    strip.text = element_text(face = "bold")
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold")
   )
 
 p_cv
