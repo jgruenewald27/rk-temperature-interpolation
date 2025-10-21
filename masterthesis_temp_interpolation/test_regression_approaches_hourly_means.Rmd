@@ -1,0 +1,851 @@
+---
+title: "test_regression_approaches_hourly_means"
+author: "Johannes Gruenewald"
+date: "2025-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Load Required Libraries}
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(corrplot)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
+--------------------------------------------------------------------------------
+
+```{r Load and preprocess data}
+
+# ================================================
+# DATA LOADING, CLEANING, AND COVARIATE PREPARATION
+# ================================================
+
+# ================================================
+# Complete data import and pre-processing
+
+# # Read temperature data for the entire year of 2023
+# temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+# 
+# # Removes rows where temp is NA
+# temp <- temp %>% filter(!is.na(temperature))
+# 
+# # Reproject the data for Germany
+# temp <- st_transform(temp, crs="EPSG:32632")
+# 
+# # Clean the data from outliers -> currently working with hard, manual breaks
+# # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+# temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+# 
+# # Calculate hour count since epoch, rounded down to current hour
+# temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+# 
+# # Drop all measurement stations which didn't collect data the entire year around
+# temp_clean_station <- temp_clean %>%
+#   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+#   filter(!entity_id %in% c(
+#     "hd:DE_Heidelberg_69120_12:WeatherObserved",
+#     "hd:DE_Heidelberg_69120_34:WeatherObserved",
+#     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+#     "hd:DE_Heidelberg_46:WeatherObserved"
+#   ))
+# 
+# # Check if exactly 4 stations were dropped
+# length(unique(na.omit(temp_clean$entity_id)))
+# length(unique(na.omit(temp_clean_station$entity_id)))
+
+# Calculate hourly mean temp for cleaned data
+# temp_clean_station_hm <- temp_clean_station %>%
+#     group_by(entity_id, chour) %>%
+#     summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+#     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+
+# ================================================
+# Import of pre-processed temp data and import and pre-processing of covariates 
+
+# consistent timezone for the whole script
+tz_berlin <- "Europe/Berlin"
+
+#Shortcut -> import pre-processed hourly means
+temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+
+# Read admin boundaries of HD
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+
+# Load the elevation data
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem, y = crs(temp_clean_station_hm))
+
+# Load the elevation data
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the elevation data to match correct CRS
+tch <- terra::project(tch, y = crs(temp_clean_station_hm))
+
+# Check if the two covariates have the same crs
+crs(tch) == crs(dem)
+
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
+
+# ================================================
+# Create a Raster Stack for all covariate information
+
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
+
+# ================================================
+# Code to include lat and lon information in raster stack
+
+# # Also add lat and lon to the raster stack
+# # Create coordinate rasters
+# lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+# lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+# 
+# # Convert to raster layers
+# lon_raster <- dem
+# lat_raster <- dem
+# values(lon_raster) <- lon
+# values(lat_raster) <- lat
+# names(lon_raster) <- "lon"
+# names(lat_raster) <- "lat"
+# 
+# # Stack the three raster layers
+# grids <- c(env_stack, lon_raster, lat_raster)
+
+# ================================================
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(env_stack)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+
+# Extract coordinates of the measurement stations
+# maybe use them as covariates
+
+# ================================================
+# # Extract coordinates and data into a data frame
+# coords <- st_coordinates(temp_clean_station_hm)
+# locs <- cbind(temp_clean_station_hm, coords)
+# locs <- as.data.frame(locs)
+# 
+# # Keep only one row per station and select relevant columns
+# station_coords <- locs %>%
+#   dplyr::distinct(entity_id, .keep_all = TRUE) %>%
+#   dplyr::select(entity_id, X, Y)
+# 
+# coordinates(station_coords) <- ~ X + Y
+# proj4string(station_coords) <- CRS(proj4string(grids_sp))
+```
+
+--------------------------------------------------------------------------------
+
+```{r create_output_folder}
+
+output_dir <- "../regression_tests"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Define subdirectories for specific output types
+variogram_dir <- file.path(output_dir, "variogram")
+cv_dir        <- file.path(output_dir, "cross_validation")
+rk_dir        <- file.path(output_dir, "rk_predictions")
+
+# Create subdirectories if they don't exist
+dir.create(variogram_dir, showWarnings = FALSE)
+dir.create(cv_dir, showWarnings = FALSE)
+dir.create(rk_dir, showWarnings = FALSE)
+
+# ================================================
+# Datetime helpers (labels & filenames)
+# ================================================
+ts_to_posix <- function(ch) as.POSIXct(ch * 3600, origin = "1970-01-01", tz = tz_berlin)   
+nice_dt     <- function(x) format(x, "%Y-%m-%d %H:00 %Z")                                   
+file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")                                       
+```
+
+--------------------------------------------------------------------------------
+
+```{r main_loop}
+# ================================================
+# Loop through 24 hourly timestamps in `temp_clean_station_hm`
+# ================================================
+
+# Get unique timestamps
+timestamps <- unique(temp_clean_station_hm$chour)[1:24]  
+
+# Counters + progress bar
+total     <- length(timestamps)                       
+completed <- 0L                                     
+skipped   <- 0L                                      
+pb <- txtProgressBar(min = 0, max = total, style = 3)
+cat(sprintf("Processing %d timestamps…\n", total))    
+
+# Loop through each timestamp
+total_metrics <- data.frame()
+all_temp_data <- data.frame()
+
+for (i in seq_along(timestamps)) {                           
+  ts <- timestamps[i]                                    
+  dt_local <- ts_to_posix(ts)                     
+  dt_lab   <- nice_dt(dt_local)                   
+  dt_file  <- file_dt(dt_local)                   
+  cat(sprintf("\n[%d/%d] Processing: chour=%s  (%s)\n", i, total, ts, dt_lab))  
+
+  # ------------------------------------------------
+  # STEP 1: Filter hourly data and plot temperature
+  # ------------------------------------------------
+  
+  # Select temperature data for the current hour
+  sel_temp_hm <- temp_clean_station_hm %>%
+    filter(chour == ts)
+  
+  # Skip if fewer than 20 data points for current hour
+  if (nrow(sel_temp_hm) < 20) {                                 
+    skipped <- skipped + 1L                                       
+    cat("  → skipped (n < 20)\n")                          
+    next                                                         
+  }
+  
+  # Append the selected temperature data to full dataset
+  all_temp_data <- rbind(all_temp_data, sel_temp_hm)
+  
+  # Generate line plot showing hourly mean temperature for each station
+  # across the time range covered so far in the loop
+  p_all <- ggplot(all_temp_data, aes(x = hour, y = hm_temp, color = entity_id, group = entity_id)) +  
+    geom_line() +
+    geom_point(size = 1) +
+    labs(title = "Hourly Mean Temperature at Each Station",        
+         x = "Date & Hour (Europe/Berlin)", y = "Mean Temperature (°C)", color = "Station") + 
+    scale_x_datetime(date_labels = "%d.%m\n%H:%M", date_breaks = "12 hours") +              
+    theme_minimal(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 0, hjust = 0.5))                                  
+  
+  # Save the temperature plot
+  ggsave(file.path(output_dir, "all_stations_hourly_mean_temperature.png"),
+         plot = p_all, width = 10, height = 6, dpi = 300)
+
+  # ------------------------------------------------
+  # STEP 2: Add covariates (elev, canopy, bldg) from grid
+  # ------------------------------------------------
+  
+  # Convert Spatial object to RasterBrick
+  r_brick <- brick(grids_sp)
+  
+  # Convert RasterBrick to terra SpatRaster object
+  grid_terra <- rast(r_brick)
+  
+  # Extract raster values at the point locations
+  extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
+  
+  # Remove the first column (ID)
+  extracted_vals <- extracted_vals[,-1]
+  
+  # Combine the point data with the extracted raster values
+  temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
+  
+  # ------------------------------------------------
+  # STEP 3: Fit linear model and prepare spatial data
+  # ------------------------------------------------
+  
+  # Fit multiple linear regression model
+  reg_model <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
+  summary_lm <- summary(lm.temp_shm)
+  
+  # Compute residuals and predictions
+  pred <- predict(reg_model, temp_shm.ex)
+  resid <- temp_shm.ex$hm_temp - pred
+  
+  # Extract metrics
+  model_metrics <- data.frame(
+    timestamp      = ts,
+    r_squared      = summary_lm$r.squared,
+    adj_r_squared  = summary_lm$adj.r.squared,
+    f_statistic    = summary_lm$fstatistic[1],
+    f_pvalue       = pf(summary_lm$fstatistic[1],
+                        summary_lm$fstatistic[2],
+                        summary_lm$fstatistic[3],
+                        lower.tail = FALSE),
+    residual_se    = summary_lm$sigma,
+    rmse           = sqrt(mean(resid^2)),
+    mae            = mean(abs(resid)),
+    AIC            = AIC(reg_model),
+    BIC            = BIC(reg_model)
+  )
+  
+  # Append to tracking data frame
+  if (!exists("lm_metrics_all")) {
+    lm_metrics_all <- model_metrics
+  } else {
+    lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
+  }
+
+  # Save model's residuals back into original df as new column
+  temp_shm.ex$residuals <- resid
+  
+  # Convert df into spatial object using existing geometry and
+  # Convert MULTIPOINT geometries to POINT
+  temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
+  
+  # ------------------------------------------------
+  # STEP 4: Compute anisotropy & fit directional variogram
+  # ------------------------------------------------
+  
+  # Compute empirical variogram map of model residuals
+  # This helps visualize spatial autocorrelation in all directions
+  varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
+                    # cutoff is half the spatial extent (or diameter) of the study area
+                    cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
+                    # scaled relative to the resolution of the grid
+                    width = 30 * grids_sp@grid@cellsize[1])
+
+  # Store cutoff and bin width values for reuse and labeling
+  cutoff_val <- sqrt(areaSpatialGrid(grids_sp)) / 2
+  width_val  <- 30 * grids_sp@grid@cellsize[1]
+  
+  # Report how many rows are in variogram map
+  cat("Variogram map has", nrow(as.data.frame(varmap)), "rows\n")
+  
+  # Define output filename for the variogram map plot
+  file_varmap <- file.path(variogram_dir, paste0(dt_file, "_variogram_map.png"))  
+  
+  # Plot and save the directional variogram map
+  png(file_varmap, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(varmap,
+         col.regions = grey(rev(seq(0, 1, 0.025))),
+         main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)\n%s",  
+                        cutoff_val / 1000, width_val / 1000, dt_lab))
+  )
+  dev.off()
+  
+  # Compute directional variograms for North–South (0°) and East–West (90°)
+  rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha = c(0, 45, 90, 135))
+
+  # Fit theoretical exponential variogram model to the directional variogram
+  rvgm.temp <- fit.variogram(rv.temp,
+      vgm(psill=var(temp_shm.sf$residuals),
+          "Exp", nugget=0, anis= c(p=90, s=0.5))) # p = direction, s = anisotropy ratio
+  
+  # Define output filename for directional variogram fit plot
+  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_directional_variogram_fit.png"))  
+ 
+  # Plot the empirical and fitted directional variograms and save
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(rv.temp, rvgm.temp,
+         main = paste0("Directional Variogram Fit (0°, 45°, 90°, 135°)\n", dt_lab),   
+         plot.nu = FALSE, cex = 1.5, pch = "+", col = "black")
+  )
+  dev.off()
+  
+  # ------------------------------------------------
+  # STEP 5: Progress bar
+  # ------------------------------------------------  
+  
+  completed <- completed + 1L 
+  setTxtProgressBar(pb, completed)
+  cat("\n")
+  cat(sprintf("  → done. Completed: %d/%d (skipped: %d)\n",      
+              completed, total, skipped))                        
+}
+
+# Close progress bar + final summary
+close(pb)                                                        
+cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
+            completed, total, skipped))                         
+
+# Save all LM metrics to a single CSV file
+metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
+if (exists("lm_metrics_all")) {                                     
+  lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
+  lm_metrics_all <- lm_metrics_all %>% relocate(datetime_local, .after = timestamp)  
+  write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
+}
+```
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+
+Adding covariates to temperature data
+
+```{r}
+# Extract raster values at the point locations
+extracted_vals <- terra::extract(grids, temp_hm)
+
+# Remove the first column (ID)
+extracted_vals <- extracted_vals[,-1]
+
+# Combine the point data with the extracted raster values
+temp_hm.ex <- cbind(as.data.frame(temp_hm), extracted_vals)
+
+temp_hm.ex
+```
+
+Old version: Extract values from all the raster and add to temperature data at point locations
+
+```{r}
+# Extract raster values at the temp locations
+elevation_values <- terra::extract(dem, temp_dm)
+
+# Extract raster values at the temp locations
+building_height_values <- terra::extract(ghs_bh, temp_dm)
+
+# Extract tree canopy height values at the temp locations
+canopy_heigth_values <- terra::extract(tch, temp_dm)
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp_dm <- temp_dm %>%
+  mutate(elevation = elevation_values[[2]])
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp_dm <- temp_dm %>%
+  mutate(building_height = building_height_values[[2]])
+
+# Use dplyr to add the extracted values as a new column in the sf object
+temp_dm <- temp_dm %>%
+  mutate(tree_canopy_height = canopy_heigth_values[[2]])
+
+# Check the updated sf object
+print(temp_dm)
+```
+
+--------------------------------------------------------------------------------
+
+Descriptive statistics and plots to analyse the temperature data
+
+Example with a visualization of three measurement stations
+
+```{r}
+# Visualize three meteorological stations
+Königstuhl_10 <- subset(temp_hm.ex, stationname=="69117_Königstuhl_10", select=c("mh_temp", "chour"))
+Bergheimer_Str._1	<- subset(temp_hm.ex, stationname=="69115_Bergheimer_Str._1", select=c("mh_temp", "chour"))
+In_den_Weinäckern <- subset(temp_hm.ex, stationname=="69251_In_den_Weinäckern", select=c("mh_temp", "chour"))
+
+par(mfrow=c(1,3))
+
+scatter.smooth(Königstuhl_10$chour, Königstuhl_10$mh_temp, xlab="Cumulative hours",
+               ylab="Mean hourly temperature", ylim=c(-12,28), col="grey")
+scatter.smooth(Bergheimer_Str._1$chour, Bergheimer_Str._1$mh_temp, xlab="Cumulative hours",
+               ylab="Mean hourly temperature", ylim=c(-12,28), col="grey")
+scatter.smooth(In_den_Weinäckern$chour, In_den_Weinäckern$mh_temp, xlab="Cumulative hours",
+               ylab="Mean hourly temperature", ylim=c(-12,28), col="grey")
+```
+
+Plot for all measurement stations
+
+```{r}
+# Get all unique station names
+stations <- unique(temp_hm.ex$stationname)
+
+# Set up the plot layout: Adjust rows/cols depending on how many you want per page
+n <- length(stations)
+par(mfrow = c(3, 3))  # Show only 9 plots per page
+
+# Loop over each station and plot
+for (s in stations) {
+  station_data <- subset(temp_hm.ex, stationname == s, select = c("mh_temp", "chour"))
+  
+  # Plot with scatter.smooth
+  scatter.smooth(
+    station_data$chour,
+    station_data$mh_temp,
+    main = s,
+    xlab = "Cumulative hours",
+    ylab = "Mean hourly temperature",
+    ylim = c(-12, 28),
+    col = "grey"
+  )
+}
+```
+
+Descriptive statistics for each station
+
+```{r}
+# Compute descriptive statistics for each station
+station_stats <- temp_hm.ex %>%
+  group_by(stationname) %>%
+  summarise(
+    n_obs        = n(),
+    temp_mean    = mean(mh_temp, na.rm = TRUE),
+    temp_sd      = sd(mh_temp, na.rm = TRUE),
+    temp_min     = min(mh_temp, na.rm = TRUE),
+    temp_max     = max(mh_temp, na.rm = TRUE),
+    chour_min    = min(chour, na.rm = TRUE),
+    chour_max    = max(chour, na.rm = TRUE)
+  )
+
+# View first few rows
+print(station_stats)
+```
+
+Stations that didn't measure the entire time or had missing measurements:
+
+Likely missing values:
+- 69115_Czernyring_22/11-12	726
+- 69117_Königstuhl_10	724
+- 69117_Rodelweg	708
+- 69118_Am_Büchsenackerhang_39	714
+- 69118_B37	711
+- 69118_Wendestelle_Hbw	711
+- 69123_Gewannn_Die_Äußeren_Rauschen	724
+- 69123_Grenzhöfer_Weg	711	
+- 69251_In_den_Weinäckern	703
+
+Started later:
+- 69115_Poststraße_15	448	
+- 69123_Richard-Drach-Straße_7	87
+
+--------------------------------------------------------------------------------
+
+Fit Linear Regression model as a test
+
+CONTINUE UNDERSTANDING THIS PART AND FURTHER INVESTIGATE HOW HOUR OF THE DAY INFO CAN BE INCLUDED AS A COVARIATE
+IF NOTHING WORK -> CONTINUE WITH HENGL 2009 AND FURTHER APPLY HIS PROCESS AND TRY TO UNDERSTAND THE CONNECTION BETWEEN 
+THE REGRESSION PART AND THE KRIGING OF THE RESIDUALS
+
+```{r}
+lm.temp_hm <- lm(mh_temp ~ elev + canopy + bldg + lon + lat + chour,
+                data = temp_hm.ex)
+
+summary(lm.temp_hm)
+```
+
+
+
+--------------------------------------------------------------------------------
+
+Test Random Forest (RF) instead of regression models to model complex relationships and see if the performance is similar to flexible regression models.
+
+Splitting the data in train and test data
+
+```{r}
+nrow(temp_dm)
+
+# Splitting data in train and test data
+split_dm <- sample.split(temp_dm$daily_mean_temperature, SplitRatio = 0.7)
+length(split_dm)
+
+train_dm <- subset(temp_dm, split_dm == "TRUE")
+test_dm <- subset(temp_dm, split_dm == "FALSE")
+```
+
+Fit the Random Forest Model
+
+```{r}
+#make this example reproducible
+set.seed(10)
+
+#fit the random forest model
+rf_model_dm <- randomForest(
+  formula = daily_mean_temperature ~ elevation + tree_canopy_height + building_height,
+  data = train_dm,
+  mtry = 3,
+  importance = TRUE,
+  na.action = na.omit
+)
+
+rf_model_dm
+importance(rf_model_dm)
+
+#find number of trees that produce lowest test MSE
+which.min(rf_model_dm$mse)
+
+#find RMSE of best model
+sqrt(rf_model_dm$mse[which.min(rf_model_dm$mse)]) 
+
+#plot the test MSE by number of trees
+plot(rf_model_dm)
+
+#Importance plot
+importance(rf_model_dm)
+
+#produce variable importance plot
+varImpPlot(rf_model_dm) 
+```
+
+Tune the model
+This function produces the following plot, which displays the number of predictors used at each split when building the trees on the x-axis and the out-of-bag estimated error on the y-axis:
+
+```{r}
+model_tuned_dm <- tuneRF(
+  x = data.frame(
+    elevation = train_dm$elevation,
+    building_height = train_dm$building_height,
+    tree_canopy_height = train_dm$tree_canopy_height
+  ),
+  y = train_dm$daily_mean_temperature,  # define response variable
+  ntreeTry = 500,
+  mtryStart = 3,
+  stepFactor = 1.5,
+  improve = 0.01,
+  trace = FALSE  # don't show real-time progress
+)
+```
+
+We can see that the lowest OOB error is achieved by using 3 randomly chosen predictors at each split when building the trees.
+
+Use the Final Model to Make Predictions and derive Residuals
+
+```{r}
+# Predict on training data
+predicted_dm_rf <- predict(rf_model_dm, newdata=test_dm)
+
+# Calculate residuals: observed - predicted
+residuals_dm_rf <- temp_dm$daily_mean_temperature - predicted_dm_rf
+
+plot(residuals_dm_rf)
+```
+
+--------------------------------------------------------------------------------
+
+
+
+
+
+Histogram to check data distribution
+
+```{r}
+# Set up a 1-row, 3-column plotting area
+par(mfrow = c(1, 3))
+
+# Plot the histograms
+hist(july_mean_temp$elevation, main = "Elevation", xlab = "Elevation (m)", col = "lightblue")
+hist(july_mean_temp$tree_canopy_height, main = "Tree Canopy Height", xlab = "Height (m)", col = "lightgreen")
+hist(july_mean_temp$building_height, main = "Building Height", xlab = "Height (m)", col = "lightcoral")
+```
+
+log-transformed the data to check possible changes to distribution
+
+```{r}
+# Set up a 1-row, 3-column plotting area
+par(mfrow = c(1, 3))
+
+# Plot the log-transformed histograms
+hist(log(july_mean_temp$elevation + 1), 
+     main = "Log(Elevation + 1)", 
+     xlab = "log(Elevation)", 
+     col = "lightblue")
+
+hist(log(july_mean_temp$tree_canopy_height + 1), 
+     main = "Log(Tree Canopy Height + 1)", 
+     xlab = "log(Height)", 
+     col = "lightgreen")
+
+hist(log(july_mean_temp$building_height + 1), 
+     main = "Log(Building Height + 1)", 
+     xlab = "log(Height)", 
+     col = "lightcoral")
+```
+
+!!Try regression models!!
+
+Build a MLR
+
+```{r}
+model <- lm(mean_temperature ~ elevation + tree_canopy_height + building_height, data = july_mean_temp)
+
+# Print model summary
+summary(model)
+
+plot(model)  # Look for non-random patterns in residuals
+```
+
+Stepwise MLR
+
+```{r}
+# stepwise variable selection
+model.MLR.step <- step(model, direction="both")
+
+# summary of the new model using stepwise covariates selection
+summary(model.MLR.step)
+
+install.packages("gtsummary")
+
+model.MLR.step |> tbl_regression()
+```
+
+Interpretation of MLR performance
+
+```{r}
+# graphical diagnosis of the regression analysis
+par(mfrow=c(2,2))
+plot(model.MLR.step)
+par(mfrow=c(1,1))
+```
+
+GLS model
+
+```{r}
+# Extract coordinates (assuming `geom` is the column with spatial data)
+july_mean_temp$coords <- st_coordinates(july_mean_temp$geom)
+
+# Separate the coordinates into `x` and `y` columns
+july_mean_temp$x <- july_mean_temp$coords[, 1]
+july_mean_temp$y <- july_mean_temp$coords[, 2]
+
+gls_model <- gls(mean_temperature ~ elevation + tree_canopy_height + building_height,
+                 data = july_mean_temp,
+                 correlation = corExp(form = ~ x + y, nugget = TRUE))
+
+summary(gls_model)
+```
+
+Test RF instead of regression model to model complex relationships and see if the performance is similar
+
+Try RF
+
+```{r}
+# 2. Fit Random Forest model
+rf_model <- randomForest(
+  mean_temperature ~ elevation + tree_canopy_height + building_height,
+  data = july_mean_temp,
+  ntree = 500,
+  importance = TRUE,
+  na.action = na.omit
+)
+
+# View basic model summary
+print(rf_model)
+
+# View variable importance
+importance(rf_model)
+varImpPlot(rf_model)
+```
+
+```{r}
+# 3. Predict and calculate residuals
+july_mean_temp$rf_pred <- predict(rf_model)
+july_mean_temp$residuals <- july_mean_temp$mean_temperature - july_mean_temp$rf_pred
+```
+
+
+```{r}
+# 4. Fit variogram to residuals
+fitted <- autofitVariogram(residuals ~ 1, input_data = july_mean_temp)
+fitted_vgm <- fitted$var_model
+plot(fitted$exp_var, fitted$var_model)
+```
+
+Create prediction locations for the kriging process including the covariates
+
+```{r}
+# Convert raster to points, including values, and remove NAs
+predLocations <- terra::as.points(dem, values=TRUE, na.rm=TRUE)
+
+# Reproject the elevation data to match correct CRS
+predLocations <- terra::project(predLocations, y = crs(july_mean_temp))
+
+# Check CRS of locations
+crs(predLocations)
+
+# Convert the points to a SpatialPointsDataFrame
+predLocations <- as(predLocations, "Spatial")
+
+# Convert sf object to sp object
+july_mean_temp_sp <- as(july_mean_temp, "Spatial")
+
+# Set CRS of predLocations_sp to match july_mean_temp
+sp::proj4string(predLocations) == sp::proj4string(july_mean_temp_sp)
+
+# Display the updated gridded points
+class(predLocations)
+```
+
+```{r}
+# 6. Interpolate residuals by kriging
+kriged_resid <- krige(residuals ~ 1,
+                      loc = july_mean_temp_sp,
+                      newdata = predLocations,
+                      model = fitted_vgm)
+```
+
+```{r}
+# 10. Model performance metrics on training data
+obs <- july_mean_temp$mean_temperature
+pred_rf <- july_mean_temp$rf_pred
+resid <- july_mean_temp$residuals
+
+# R², RMSE, MAE
+r2_rf <- 1 - sum((obs - pred_rf)^2) / sum((obs - mean(obs))^2)
+rmse_rf <- sqrt(mean((obs - pred_rf)^2))
+mae_rf <- mean(abs(obs - pred_rf))
+
+cat("Random Forest Performance:\n")
+cat("R² =", round(r2_rf, 3), "\n")
+cat("RMSE =", round(rmse_rf, 3), "\n")
+cat("MAE =", round(mae_rf, 3), "\n\n")
+
+# 11. Moran's I on residuals (check spatial autocorrelation)
+coords_mat <- coordinates(july_mean_temp_sp)
+nb <- knn2nb(knearneigh(coords_mat, k = 4))
+lw <- nb2listw(nb)
+moran_result <- moran.test(resid, lw)
+print(moran_result)
+
+# 12. Cross-validation of kriging residuals
+kr_cv <- krige.cv(residuals ~ 1, locations = july_mean_temp_sp, model = fitted_vgm)
+cat("Kriging Cross-Validation:\n")
+summary(kr_cv$residual)
+```
+
