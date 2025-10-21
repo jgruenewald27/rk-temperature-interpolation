@@ -206,21 +206,30 @@ output_dir <- "../regression_tests"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Define subdirectories for specific output types
+lm_dir        <- file.path(output_dir, "lm_metrics")
+gam_dir       <- file.path(output_dir, "gam_metrics")
+rf_dir        <- file.path(output_dir, "rf_metrics")
 variogram_dir <- file.path(output_dir, "variogram")
-cv_dir        <- file.path(output_dir, "cross_validation")
-rk_dir        <- file.path(output_dir, "rk_predictions")
 
 # Create subdirectories if they don't exist
+dir.create(lm_dir, showWarnings = FALSE)
+dir.create(gam_dir, showWarnings = FALSE)
+dir.create(rf_dir, showWarnings = FALSE)
 dir.create(variogram_dir, showWarnings = FALSE)
-dir.create(cv_dir, showWarnings = FALSE)
-dir.create(rk_dir, showWarnings = FALSE)
 
 # ================================================
 # Datetime helpers (labels & filenames)
 # ================================================
 ts_to_posix <- function(ch) as.POSIXct(ch * 3600, origin = "1970-01-01", tz = tz_berlin)   
 nice_dt     <- function(x) format(x, "%Y-%m-%d %H:00 %Z")                                   
-file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")                                       
+file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")    
+
+# Define output file and remove any old version
+metrics_file <- file.path(lm_dir, "lm_model_performance_summary.csv")
+if (file.exists(metrics_file)) {
+  file.remove(metrics_file)
+  cat("Old metrics file removed — starting fresh.\n")
+}
 ```
 
 --------------------------------------------------------------------------------
@@ -231,7 +240,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # ================================================
 
 # Get unique timestamps
-timestamps <- unique(temp_clean_station_hm$chour)[1:24]  
+timestamps <- unique(temp_clean_station_hm$chour)[1:288]  
 
 # Counters + progress bar
 total     <- length(timestamps)                       
@@ -309,7 +318,7 @@ for (i in seq_along(timestamps)) {
   
   # Fit multiple linear regression model
   reg_model <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
-  summary_lm <- summary(lm.temp_shm)
+  summary_lm <- summary(reg_model)
   
   # Compute residuals and predictions
   pred <- predict(reg_model, temp_shm.ex)
@@ -332,12 +341,14 @@ for (i in seq_along(timestamps)) {
     BIC            = BIC(reg_model)
   )
   
-  # Append to tracking data frame
-  if (!exists("lm_metrics_all")) {
-    lm_metrics_all <- model_metrics
-  } else {
-    lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
-  }
+  write.table(
+    model_metrics,
+    file = metrics_file,
+    sep = ",",
+    row.names = FALSE,
+    col.names = !file.exists(metrics_file),
+    append = TRUE
+  )
 
   # Save model's residuals back into original df as new column
   temp_shm.ex$residuals <- resid
@@ -414,16 +425,95 @@ close(pb)
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
             completed, total, skipped))                         
 
-# Save all LM metrics to a single CSV file
-metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
-if (exists("lm_metrics_all")) {                                     
-  lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
-  lm_metrics_all <- lm_metrics_all %>% relocate(datetime_local, .after = timestamp)  
-  write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
-}
+# # Save all LM metrics to a single CSV file
+# metrics_file <- file.path(lm_dir, "lm_model_performance_summary.csv")
+# if (exists("lm_metrics_all")) {                                     
+#   lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
+#   lm_metrics_all <- lm_metrics_all %>% relocate(datetime_local, .after = timestamp)  
+#   write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
+# }
 ```
 
 --------------------------------------------------------------------------------
+
+Plot the outputs
+
+```{r Analyse LM metrics}
+
+# Read CSV with lm_metrics
+lm_metrics <- read.csv("../regression_tests/lm_metrics/lm_model_performance_summary.csv")
+
+lm_metrics <- lm_metrics %>%
+  mutate(
+    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)
+  )
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter year 2023
+lm_df_plot <- lm_metrics_long %>%
+  filter(year(date) == 2023)
+
+# Plot: Daily Evaluation of Multiple Linear Regression Model Performance
+p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  # Lines and points for model metrics
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),
+    color = "grey60"
+  ) +
+  geom_point(size = 1.8) +
+  # Facet by date
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +
+  # Color and linetype scales
+  scale_color_manual(
+    values = c(
+      "r_squared"     = "#6699CC",
+      "adj_r_squared" = "#CC6677"
+    ),
+    labels = c(
+      "r_squared"     = expression(R^2),
+      "adj_r_squared" = expression(Adjusted~R^2)
+    )
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Fit (R² = 1)" = "dotted")
+  ) +
+  # Labels
+  labs(
+    title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
+    subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Metric Value",
+    color    = "Metrics"
+  ) +
+  # X-axis ticks
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position    = "top",
+    legend.box         = "horizontal",
+    panel.grid.minor   = element_blank(),
+    panel.spacing      = unit(0.8, "lines"),
+    strip.background   = element_rect(fill = "grey90", color = NA),
+    strip.text         = element_text(face = "bold")
+  )
+
+# Show plot
+p_lm
+
+# Save plot
+# ggsave("../plots/lm_metrics_by_day.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+```
+
 
 --------------------------------------------------------------------------------
 
