@@ -295,7 +295,7 @@ for (i in seq_along(timestamps)) {
   # STEP 3: Fit linear model and prepare spatial data
   # ------------------------------------------------
   
-  # Fit linear model
+  # Fit multiple linear regression model
   lm.temp_shm <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
   summary_lm <- summary(lm.temp_shm)
   
@@ -665,6 +665,59 @@ p_rk
 ggsave("../plots/rk_metrics_by_day.png", plot = p_rk, width = 12, height = 8, dpi = 300)
 
 ```
+
+```{r Analyse LM metrics}
+
+# Read CSV with lm_metrics
+lm_metrics <- read.csv("../rk_results_testweek/lm_model_performance_summary.csv")
+
+lm_metrics <- lm_metrics %>%
+  mutate(
+    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)
+  )
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter year 2023
+lm_df_plot <- lm_metrics_long %>%
+  filter(year(date) == 2023)
+
+# Plot
+p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   
+  scale_color_manual(values = c("r_squared" = "#6699CC",
+                                "adj_r_squared"  = "#CC6677"),
+                     labels = c("r_squared" = "R-squared",
+                                "adj_r_squared"  = "Adjusted R-squared")) +
+  labs(
+    title = "Evaluation Metrics of the Multiple Linear Regression Model (by Day)",
+    subtitle = "Hourly values of R-squared and Adjusted R-squared",
+    x = "Hour of Day",
+    y = "Metric Value",
+    color = "Metric"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text = element_text(face = "bold")
+  )
+
+p_lm
+
+# Save plot
+ggsave("../plots/lm_metrics_by_day.png", plot = p_rk, width = 12, height = 8, dpi = 300)
+```
+
 
 ------------------------------------------------------------------------
 
