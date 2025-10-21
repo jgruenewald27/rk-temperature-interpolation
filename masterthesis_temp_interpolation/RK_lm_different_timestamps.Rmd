@@ -613,7 +613,7 @@ p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)
   # Labels
   labs(
     title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
-    subtitle = "Hourly RMSE and MAE values from Leave-One-Out Cross-Validation of models predicting hourly mean temperature",
+    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
     x        = "Hour of the Day",
     y        = "Error Metric [°C]",
     color    = "Metrics"
