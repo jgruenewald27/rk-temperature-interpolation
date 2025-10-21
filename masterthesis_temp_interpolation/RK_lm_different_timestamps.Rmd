@@ -715,7 +715,7 @@ p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metr
 p_lm
 
 # Save plot
-ggsave("../plots/lm_metrics_by_day.png", plot = p_rk, width = 12, height = 8, dpi = 300)
+ggsave("../plots/lm_metrics_by_day.png", plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
 
