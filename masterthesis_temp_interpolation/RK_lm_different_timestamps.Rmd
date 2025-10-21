@@ -718,7 +718,7 @@ p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metr
   labs(
     title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
     subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
-    x        = "Hour of Day",
+    x        = "Hour of the Day",
     y        = "Metric Value",
     color    = "Metrics"
   ) +
