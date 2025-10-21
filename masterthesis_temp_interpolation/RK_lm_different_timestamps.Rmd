@@ -219,7 +219,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # ================================================
 
 # Get unique timestamps
-timestamps <- unique(temp_clean_station_hm$chour)[1:3]  
+timestamps <- unique(temp_clean_station_hm$chour)[1:24]  
 
 # Counters + progress bar
 total     <- length(timestamps)                       
@@ -299,15 +299,25 @@ for (i in seq_along(timestamps)) {
   lm.temp_shm <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
   summary_lm <- summary(lm.temp_shm)
   
-  # Extract model metrics
+  # Compute residuals and predictions
+  pred <- predict(lm.temp_shm, temp_shm.ex)
+  resid <- temp_shm.ex$hm_temp - pred
+  
+  # Extract metrics
   model_metrics <- data.frame(
-    timestamp     = ts,
-    r_squared     = summary_lm$r.squared,
-    adj_r_squared = summary_lm$adj.r.squared,
-    f_statistic   = summary_lm$fstatistic[1],
-    df1           = summary_lm$fstatistic[2],
-    df2           = summary_lm$fstatistic[3],
-    residual_se   = summary_lm$sigma
+    timestamp      = ts,
+    r_squared      = summary_lm$r.squared,
+    adj_r_squared  = summary_lm$adj.r.squared,
+    f_statistic    = summary_lm$fstatistic[1],
+    f_pvalue       = pf(summary_lm$fstatistic[1],
+                        summary_lm$fstatistic[2],
+                        summary_lm$fstatistic[3],
+                        lower.tail = FALSE),
+    residual_se    = summary_lm$sigma,
+    rmse           = sqrt(mean(resid^2)),
+    mae            = mean(abs(resid)),
+    AIC            = AIC(lm.temp_shm),
+    BIC            = BIC(lm.temp_shm)
   )
   
   # Append to tracking data frame
@@ -318,14 +328,11 @@ for (i in seq_along(timestamps)) {
   }
 
   # Save model's residuals back into original df as new column
-  temp_shm.ex$residuals <- lm.temp_shm$residuals
+  temp_shm.ex$residuals <- resid
   
-  # Convert df into spatial object using existing geometry
-  temp_shm.sf <- st_as_sf(temp_shm.ex)
-  
+  # Convert df into spatial object using existing geometry and
   # Convert MULTIPOINT geometries to POINT
-  temp_shm.sf <- temp_shm.sf |>
-    st_cast("POINT")
+  temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
   
   # ------------------------------------------------
   # STEP 4: Compute anisotropy & fit directional variogram
@@ -562,7 +569,7 @@ Plots to analyse model performance metrices
 
 ```{r Analyse CV metrics}
 # Read CSV
-cv_metrics <- read.csv("../rk_results_testweek/cross_validation_metrics.csv")
+cv_metrics <- read.csv("../rk_variogram_test/cross_validation_metrics.csv")
 
 cv_metrics <- cv_metrics %>%
   mutate(
@@ -632,13 +639,13 @@ p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)
 p_cv
 
 # Save the plot
-ggsave("../plots/cv_metrics_by_day.png", plot = p_cv, width = 12, height = 8, dpi = 300)
+# ggsave("../plots/cv_metrics_by_day.png", plot = p_cv, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse RK metrics}
 
 # Read CSV with rk_metrics
-rk_metrics <- read.csv("../rk_results_testweek/rk_metrics.csv")
+rk_metrics <- read.csv("../rk_variogram_test/rk_metrics.csv")
 
 rk_metrics <- rk_metrics %>%
   mutate(
@@ -705,14 +712,14 @@ p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)
 p_rk
 
 # Save plot
-ggsave("../plots/rk_metrics_by_day.png", plot = p_rk, width = 12, height = 8, dpi = 300)
+# ggsave("../plots/rk_metrics_by_day.png", plot = p_rk, width = 12, height = 8, dpi = 300)
 
 ```
 
 ```{r Analyse LM metrics}
 
 # Read CSV with lm_metrics
-lm_metrics <- read.csv("../rk_results_testweek/lm_model_performance_summary.csv")
+lm_metrics <- read.csv("../rk_variogram_test/lm_model_performance_summary.csv")
 
 lm_metrics <- lm_metrics %>%
   mutate(
@@ -782,7 +789,7 @@ p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metr
 p_lm
 
 # Save plot
-ggsave("../plots/lm_metrics_by_day.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+# ggsave("../plots/lm_metrics_by_day.png", plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
 
