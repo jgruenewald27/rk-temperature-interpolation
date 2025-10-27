@@ -48,49 +48,54 @@ library(car)
 --------------------------------------------------------------------------------
 
 ```{r Load and preprocess data}
-
 # ================================================
 # DATA LOADING, CLEANING, AND COVARIATE PREPARATION
 # ================================================
 
-# consistent timezone for the whole script
-tz_berlin <- "Europe/Berlin"
+# ================================================
+# Complete data import and pre-processing
 
-# Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
-
-# Removes rows where temp is NA
-temp <- temp %>% filter(!is.na(temperature))
-
-# Reproject the data for Germany
-temp <- st_transform(temp, crs="EPSG:32632")
-
-# Clean the data from outliers -> currently working with hard, manual breaks
-# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
-temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
-
-# Calculate hour count since epoch, rounded down to current hour
-temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
-
-# Drop all measurement stations which didn't collect data the entire year around
-temp_clean_station <- temp_clean %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
-  filter(!entity_id %in% c(
-    "hd:DE_Heidelberg_69120_12:WeatherObserved",
-    "hd:DE_Heidelberg_69120_34:WeatherObserved",
-    "hd:DE_Heidelberg_69123_41:WeatherObserved",
-    "hd:DE_Heidelberg_46:WeatherObserved"
-  ))
-
-# Check if exactly 4 stations were dropped
-length(unique(na.omit(temp_clean$entity_id)))
-length(unique(na.omit(temp_clean_station$entity_id)))
+# # Read temperature data for the entire year of 2023
+# temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+# 
+# # Removes rows where temp is NA
+# temp <- temp %>% filter(!is.na(temperature))
+# 
+# # Reproject the data for Germany
+# temp <- st_transform(temp, crs="EPSG:32632")
+# 
+# # Clean the data from outliers -> currently working with hard, manual breaks
+# # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+# temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+# 
+# # Calculate hour count since epoch, rounded down to current hour
+# temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+# 
+# # Drop all measurement stations which didn't collect data the entire year around
+# temp_clean_station <- temp_clean %>%
+#   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+#   filter(!entity_id %in% c(
+#     "hd:DE_Heidelberg_69120_12:WeatherObserved",
+#     "hd:DE_Heidelberg_69120_34:WeatherObserved",
+#     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+#     "hd:DE_Heidelberg_46:WeatherObserved"
+#   ))
+# 
+# # Check if exactly 4 stations were dropped
+# length(unique(na.omit(temp_clean$entity_id)))
+# length(unique(na.omit(temp_clean_station$entity_id)))
 
 # Calculate hourly mean temp for cleaned data
 # temp_clean_station_hm <- temp_clean_station %>%
 #     group_by(entity_id, chour) %>%
 #     summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
 #     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+
+# ================================================
+# Import of pre-processed temp data and import and pre-processing of covariates 
+
+# consistent timezone for the whole script
+tz_berlin <- "Europe/Berlin"
 
 #Shortcut -> import pre-processed hourly means
 temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
@@ -102,7 +107,7 @@ hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-dem <- terra::project(dem, y = crs(temp))
+dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 
 # Load the elevation data
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
@@ -112,7 +117,7 @@ tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
 tch[tch == 101] <- NA
 
 # Reproject the elevation data to match correct CRS
-tch <- terra::project(tch, y = crs(temp))
+tch <- terra::project(tch, y = crs(temp_clean_station_hm))
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
@@ -121,14 +126,13 @@ crs(tch) == crs(dem)
 ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-ghs_bh <- terra::project(ghs_bh, y = crs(temp))
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
 # Check if CRS is correct
 crs(ghs_bh) == crs(dem)
 
-
-
-# Create a Raster Stack for all the covariate information
+# ================================================
+# Create a Raster Stack for all covariate information
 
 # Check resolution of each raster
 terra::res(dem)
@@ -145,27 +149,31 @@ env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
 # Rename layers for clarity
 names(env_stack) <- c("elevation", "canopy_height", "building_height")
 
-# Also add lat and lon to the raster stack
-# Create coordinate rasters
-lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
-lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+# ================================================
+# Code to include lat and lon information in raster stack
 
-# Convert to raster layers
-lon_raster <- dem
-lat_raster <- dem
-values(lon_raster) <- lon
-values(lat_raster) <- lat
-names(lon_raster) <- "lon"
-names(lat_raster) <- "lat"
+# # Also add lat and lon to the raster stack
+# # Create coordinate rasters
+# lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+# lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+# 
+# # Convert to raster layers
+# lon_raster <- dem
+# lat_raster <- dem
+# values(lon_raster) <- lon
+# values(lat_raster) <- lat
+# names(lon_raster) <- "lon"
+# names(lat_raster) <- "lat"
+# 
+# # Stack the three raster layers
+# grids <- c(env_stack, lon_raster, lat_raster)
 
-# Stack the three raster layers
-grids <- c(env_stack, lon_raster, lat_raster)
-
+# ================================================
 # Conversion when running the analysis without proximity to water
 # Preparation of grid as a covariate for running RK
 
 # Convert SpatRaster to RasterLayer (raster package)
-grids_ras <- stack(grids)
+grids_ras <- stack(env_stack)
 
 # Now convert to SpatialGridDataFrame
 grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
@@ -175,9 +183,10 @@ grids_sp@data
 # Extract coordinates of the measurement stations
 # maybe use them as covariates
 
+# ================================================
 # Extract coordinates and data into a data frame
-coords <- st_coordinates(temp)
-locs <- cbind(temp, coords)
+coords <- st_coordinates(temp_clean_station_hm)
+locs <- cbind(temp_clean_station_hm, coords)
 locs <- as.data.frame(locs)
 
 # Keep only one row per station and select relevant columns
@@ -187,12 +196,40 @@ station_coords <- locs %>%
 
 coordinates(station_coords) <- ~ X + Y
 proj4string(station_coords) <- CRS(proj4string(grids_sp))
+
+length(unique(stations$entity_id))
+
+
+# Ensure 'geom' is the active geometry column
+stations <- temp_clean_station_hm
+sf::st_geometry(stations) <- "geom"
+
+# Keep one unique geometry per entity_id
+stations_1row <- stations %>%
+  dplyr::select(entity_id, geom) %>%
+  dplyr::distinct(entity_id, .keep_all = TRUE)
+
+
+# 3) Extract coordinates
+cc <- sf::st_coordinates(stations_1row)
+
+station_df <- stations_1row %>%
+  sf::st_drop_geometry() %>%
+  mutate(X = cc[, 1], Y = cc[, 2]) %>%
+  select(entity_id, X, Y)
+
+# (Optional) Convert to 'sp' and match CRS to your grid object
+station_sp <- station_df
+coordinates(station_sp) <- ~ X + Y
+proj4string(station_sp) <- CRS(proj4string(grids_sp))
+
+
 ```
 
 --------------------------------------------------------------------------------
 
 ```{r create_output_folder}
-output_dir <- "../rk_variogram_test"
+output_dir <- "../rk_results"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Define subdirectories for specific output types
@@ -448,7 +485,7 @@ for (i in seq_along(timestamps)) {
   locTEMP.reg <- predict(lm.temp_shm, grids_sp)
   
   # OK of the regression residuals to model spatial autocorrelation
-  locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
+  locTEMP <- predict(g.resid, grids_sp)
   
   # Combine the regression prediction with kriged residuals to get final RK predictions
   rk.pred <- locTEMP.reg + locTEMP$residuals.pred
