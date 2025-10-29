@@ -341,6 +341,9 @@ p_sd <- ggplot(temp_monthly_2023, aes(x = month, y = sd_temp)) +
 
 # Save SD plot
 ggsave("../plots/monthly_sd_temperatures_2023.png", p_sd, width = 8, height = 5, dpi = 300)
+
+p_mean
+p_sd
 ```
 
 
