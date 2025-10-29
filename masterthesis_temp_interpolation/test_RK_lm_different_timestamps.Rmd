@@ -56,35 +56,35 @@ library(car)
 # consistent timezone for the whole script
 tz_berlin <- "Europe/Berlin"
 
-# Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
-
-# Removes rows where temp is NA
-temp <- temp %>% filter(!is.na(temperature))
-
-# Reproject the data for Germany
-temp <- st_transform(temp, crs="EPSG:32632")
-
-# Clean the data from outliers -> currently working with hard, manual breaks
-# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
-temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
-
-# Calculate hour count since epoch, rounded down to current hour
-temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
-
-# Drop all measurement stations which didn't collect data the entire year around
-temp_clean_station <- temp_clean %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
-  filter(!entity_id %in% c(
-    "hd:DE_Heidelberg_69120_12:WeatherObserved",
-    "hd:DE_Heidelberg_69120_34:WeatherObserved",
-    "hd:DE_Heidelberg_69123_41:WeatherObserved",
-    "hd:DE_Heidelberg_46:WeatherObserved"
-  ))
-
-# Check if exactly 4 stations were dropped
-length(unique(na.omit(temp_clean$entity_id)))
-length(unique(na.omit(temp_clean_station$entity_id)))
+# # Read temperature data for the entire year of 2023
+# temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+# 
+# # Removes rows where temp is NA
+# temp <- temp %>% filter(!is.na(temperature))
+# 
+# # Reproject the data for Germany
+# temp <- st_transform(temp, crs="EPSG:32632")
+# 
+# # Clean the data from outliers -> currently working with hard, manual breaks
+# # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+# temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+# 
+# # Calculate hour count since epoch, rounded down to current hour
+# temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+# 
+# # Drop all measurement stations which didn't collect data the entire year around
+# temp_clean_station <- temp_clean %>%
+#   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+#   filter(!entity_id %in% c(
+#     "hd:DE_Heidelberg_69120_12:WeatherObserved",
+#     "hd:DE_Heidelberg_69120_34:WeatherObserved",
+#     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+#     "hd:DE_Heidelberg_46:WeatherObserved"
+#   ))
+# 
+# # Check if exactly 4 stations were dropped
+# length(unique(na.omit(temp_clean$entity_id)))
+# length(unique(na.omit(temp_clean_station$entity_id)))
 
 # Calculate hourly mean temp for cleaned data
 # temp_clean_station_hm <- temp_clean_station %>%
@@ -95,14 +95,20 @@ length(unique(na.omit(temp_clean_station$entity_id)))
 #Shortcut -> import pre-processed hourly means
 temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
 
+# Reproject
+temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
+
 # Read admin boundaries of HD
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+
+# Reproject 
+hd_bounds <- st_transform(hd_bounds, crs = st_crs(temp_clean_station_hm))
 
 # Load the elevation data
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-dem <- terra::project(dem, y = crs(temp))
+dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 
 # Load the elevation data
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
@@ -112,7 +118,7 @@ tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
 tch[tch == 101] <- NA
 
 # Reproject the elevation data to match correct CRS
-tch <- terra::project(tch, y = crs(temp))
+tch <- terra::project(tch, y = crs(temp_clean_station_hm))
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
@@ -121,7 +127,7 @@ crs(tch) == crs(dem)
 ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-ghs_bh <- terra::project(ghs_bh, y = crs(temp))
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
 # Check if CRS is correct
 crs(ghs_bh) == crs(dem)
@@ -175,18 +181,27 @@ grids_sp@data
 # Extract coordinates of the measurement stations
 # maybe use them as covariates
 
-# Extract coordinates and data into a data frame
-coords <- st_coordinates(temp)
-locs <- cbind(temp, coords)
-locs <- as.data.frame(locs)
+# # Extract coordinates and data into a data frame
+# coords <- st_coordinates(temp)
+# locs <- cbind(temp, coords)
+# locs <- as.data.frame(locs)
+# 
+# # Keep only one row per station and select relevant columns
+# station_coords <- locs %>%
+#   dplyr::distinct(entity_id, .keep_all = TRUE) %>%
+#   dplyr::select(entity_id, X, Y)
+# 
+# coordinates(station_coords) <- ~ X + Y
+# proj4string(station_coords) <- CRS(proj4string(grids_sp))
 
-# Keep only one row per station and select relevant columns
-station_coords <- locs %>%
-  dplyr::distinct(entity_id, .keep_all = TRUE) %>%
-  dplyr::select(entity_id, X, Y)
+# Shortcut: load the pre-processed layer
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
 
-coordinates(station_coords) <- ~ X + Y
-proj4string(station_coords) <- CRS(proj4string(grids_sp))
+# Reproject
+station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+
+# Convert to SpatialPointsDataFrame
+station_coords <- as(station_coords_sf, "Spatial")
 ```
 
 --------------------------------------------------------------------------------
@@ -219,7 +234,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # ================================================
 
 # Get unique timestamps
-timestamps <- unique(temp_clean_station_hm$chour)[1:10]  
+timestamps <- unique(temp_clean_station_hm$chour)[1:3]  
 
 # Counters + progress bar
 total     <- length(timestamps)                       
@@ -441,7 +456,7 @@ for (i in seq_along(timestamps)) {
   locTEMP.reg <- predict(lm.temp_shm, grids_sp)
   
   # OK of the regression residuals to model spatial autocorrelation
-  locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
+  locTEMP <- predict(g.resid, grids_sp)
   
   # Combine the regression prediction with kriged residuals to get final RK predictions
   rk.pred <- locTEMP.reg + locTEMP$residuals.pred
@@ -555,10 +570,6 @@ if (exists("rk_metrics_all")) {
   write.csv(rk_metrics_all, rk_file, row.names = FALSE)
 }
 ```
-```{r}
-str(temp_shm.sf)
-```
-
 
 ------------------------------------------------------------------------
 
