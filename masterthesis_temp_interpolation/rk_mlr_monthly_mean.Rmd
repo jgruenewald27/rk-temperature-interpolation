@@ -630,8 +630,8 @@ if (exists("rk_metrics_all")) {
 
 Plots to analyse model performance metrices
 
-```{r}
-# Read CSV (columns: month, cv_rmse, cv_mae, cv_bias)
+```{r Analyse CV metrics}
+# Read the cv metrics
 cv_metrics <- read.csv("../rk_monthly_mean/cross_validation_metrics.csv",
                        stringsAsFactors = FALSE)
 
@@ -671,7 +671,7 @@ p_cv <- ggplot(cv_metrics_long,
   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
   labs(
     title    = "Monthly Evaluation of Regression-Kriging LOOCV Metrics",
-    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting monthly mean temperature",
+    subtitle = "Monthly RMSE and MAE values from LOOCV of models predicting monthly mean temperature",
     x        = "Month",
     y        = "Error Metric [°C]",
     color    = "Metrics",
@@ -686,366 +686,147 @@ p_cv <- ggplot(cv_metrics_long,
 
 p_cv
 
-# Optional: a separate plot for monthly bias (often centered near 0, separate y-scale helps)
-p_bias <- ggplot(cv_metrics %>%
-                   mutate(month_date = as.Date(paste0(month, "-01"))) %>%
-                   arrange(month_date),
-                 aes(x = month_date, y = cv_bias, group = 1)) +
-  geom_hline(yintercept = 0, linetype = "dotted") +
-  geom_line() +
-  geom_point() +
-  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
-  labs(
-    title = "Monthly LOOCV Bias",
-    x = "Month",
-    y = "Bias [°C]"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
 # Save if needed
 ggsave("../plots/cv_metrics_monthly_rmse_mae.png", plot = p_cv, width = 10, height = 6, dpi = 300)
-# ggsave("../plots/cv_metrics_monthly_bias.png", plot = p_bias, width = 10, height = 4, dpi = 300)
-
-```
-
-```{r}
-library(dplyr)
-library(tidyr)
-library(lubridate)
-library(ggplot2)
-# install.packages("ggrepel") if needed
-library("ggrepel")
-
-# cv_metrics: columns month, cv_rmse, cv_mae, cv_bias
-df_long <- cv_metrics %>%
-  mutate(month_date = as.Date(paste0(month, "-01"))) %>%
-  pivot_longer(c(cv_rmse, cv_mae), names_to = "metric", values_to = "value") %>%
-  arrange(month_date)
-
-# Okabe–Ito palette (color-blind friendly)
-cols <- c(cv_rmse = "#0072B2",  # blue
-          cv_mae  = "#D55E00")  # orange
-
-# last points per series for direct labels
-lab_data <- df_long %>% group_by(metric) %>% slice_max(month_date, n = 1) %>% ungroup()
-
-# summer shading (June–Aug); adjust if your climate story differs
-yr <- year(min(df_long$month_date, na.rm = TRUE))
-summer_start <- as.Date(sprintf("%d-06-01", yr))
-summer_end   <- as.Date(sprintf("%d-08-31", yr))
-
-p_cv <- ggplot(df_long, aes(month_date, value, color = metric, group = metric)) +
-  # season band (draw first)
-  annotate("rect", xmin = summer_start, xmax = summer_end,
-           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 2, stroke = 0.2) +
-  geom_hline(yintercept = 0, linetype = "dotted") +
-  # direct labels near last month
-  geom_label_repel(
-    data = lab_data,
-    aes(label = ifelse(metric == "cv_rmse", "RMSE", "MAE")),
-    show.legend = FALSE, fill = "white", size = 4, label.r = unit(2, "pt"),
-    min.segment.length = 0, nudge_x = 15
-  ) +
-  scale_color_manual(values = cols, labels = c(cv_mae = "Mean Absolute Error (MAE)",
-                                               cv_rmse = "Root Mean Square Error (RMSE)")) +
-  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m", expand = expansion(mult = c(.01,.05))) +
-  labs(
-    title    = "Monthly Evaluation of Regression-Kriging LOOCV Metrics",
-    subtitle = "RMSE and MAE for monthly mean temperature (shaded = Jun–Aug)",
-    x = "Month",
-    y = "Error [°C]",
-    color = NULL,
-    caption = "LOOCV = leave-one-out cross-validation"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position   = "none",
-    panel.grid.minor  = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x       = element_text(angle = 45, hjust = 1)
-  )
-
-p_cv
-# ggsave("cv_metrics_monthly_rmse_mae.png", p_cv, width = 11, height = 6, dpi = 300)
-
-```
-
-
-```{r Analyse CV metrics}
-# Read CSV
-cv_metrics <- read.csv("../rk_monthly_mean/cross_validation_metrics.csv")
-
-cv_metrics <- cv_metrics %>%
-  mutate(
-    # Rückrechnung von Stunden seit 1970-01-01
-    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
-    
-    # Zusätzliche Helferspalten
-    date = as.Date(datetime_calc),
-    hour = hour(datetime_calc)
-  )
-
-# Reshape to long format
-cv_metrics_long <- cv_metrics %>%
-  pivot_longer(cols = c(cv_rmse, cv_mae),
-               names_to = "metric",
-               values_to = "value")
-
-# Filter nur 2023
-df_plot <- cv_metrics_long %>%
-  filter(year(date) == 2023)
-
-# Plot: Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
-p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  # Lines, reference line, and points
-  geom_line(linewidth = 1.2) +
-  geom_hline(
-    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
-    color = "grey60"
-  ) +
-  geom_point(size = 1.8) +
-  # Facet by date
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  # Color and linetype scales
-  scale_color_manual(
-    values = c(
-      "cv_rmse" = "#6699CC",
-      "cv_mae"  = "#CC6677"
-    ),
-    labels = c(
-      "cv_rmse" = "Root Mean Square Error (RMSE)",
-      "cv_mae"  = "Mean Absolute Error (MAE)"
-    )
-  ) +
-  scale_linetype_manual(
-    name   = "",
-    values = c("Perfect Prediction (Error = 0)" = "dotted")
-  ) +
-  # Labels
-  labs(
-    title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
-    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
-    x        = "Hour of the Day",
-    y        = "Error Metric [°C]",
-    color    = "Metrics"
-  ) +
-  # X-axis breaks
-  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  # Theme
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position   = "top",
-    panel.grid.minor  = element_blank(),
-    strip.background  = element_rect(fill = "grey90", color = NA),
-    strip.text        = element_text(face = "bold")
-  )
-
-p_cv
-
-# Save the plot
-#ggsave("../plots/cv_metrics_by_day_01-01-2023.png", plot = p_cv, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse RK metrics}
+# Read the rk metrics
+rk_metrics <- read.csv("../rk_monthly_mean/rk_metrics.csv",
+                       stringsAsFactors = FALSE)
 
-# Read CSV with rk_metrics
-rk_metrics <- read.csv("../rk_results_week_01/rk_metrics.csv")
-
-rk_metrics <- rk_metrics %>%
-  mutate(
-    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = hour(datetime_calc)
-  )
-
-# Reshape to long format
+# Prepare monthly date and tidy format
 rk_metrics_long <- rk_metrics %>%
-  pivot_longer(cols = c(rk_rmse, rk_mae),
-               names_to = "metric",
-               values_to = "value")
+  mutate(
+    month_date = as.Date(paste0(month, "-01")),  # "2023-01" -> Date
+    .keep = "all"
+  ) %>%
+  pivot_longer(
+    cols = c(rk_rmse, rk_mae),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  arrange(month_date)
 
-# Filter year 2023
-df_plot <- rk_metrics_long %>%
-  filter(year(date) == 2023)
+# If you didn't define these earlier, uncomment to auto-set JJA for first year in data:
+# yr <- lubridate::year(min(rk_metrics_long$month_date, na.rm = TRUE))
+# summer_start <- as.Date(sprintf("%d-06-01", yr))
+# summer_end   <- as.Date(sprintf("%d-08-31", yr))
 
-# Plot: Daily Evaluation of the Regression-Kriging Model Performance Metrics
-p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  # Lines, reference line, and points
+# Plot: Monthly Evaluation of the RK Metrics (RMSE & MAE)
+p_rk <- ggplot(rk_metrics_long,
+               aes(x = month_date, y = value, color = metric, group = metric)) +
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
   geom_line(linewidth = 1.2) +
-  geom_hline(
-    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
-    color = "grey60"
-  ) +
   geom_point(size = 1.8) +
-  # Facet by date
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  # Color and linetype scales
+  geom_hline(
+    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)")
+  ) +
   scale_color_manual(
-    values = c(
-      "rk_rmse" = "#6699CC",
-      "rk_mae"  = "#CC6677"
-    ),
-    labels = c(
-      "rk_rmse" = "Root Mean Square Error (RMSE)",
-      "rk_mae"  = "Mean Absolute Error (MAE)"
-    )
+    values = c("rk_rmse" = "#6699CC", "rk_mae" = "#CC6677"),
+    labels = c("rk_rmse" = "Root Mean Square Error (RMSE)",
+               "rk_mae"  = "Mean Absolute Error (MAE)")
   ) +
   scale_linetype_manual(
     name   = "",
     values = c("Perfect Prediction (Error = 0)" = "dotted")
   ) +
-  # Labels
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
   labs(
-    title    = "Daily Evaluation of the Regression-Kriging Model Performance Metrics",
-    subtitle = "Hourly RMSE and MAE values from models predicting hourly mean temperature",
-    x        = "Hour of the Day",
+    title    = "Monthly Evaluation of Regression-Kriging Metrics",
+    subtitle = "Monthly RMSE and MAE values from predictions evaluated at station locations",
+    x        = "Month",
     y        = "Error Metric [°C]",
-    color    = "Metrics"
+    color    = "Metrics",
+    caption  = "LOOCV = leave-one-out cross-validation"
   ) +
-  # X-axis breaks
-  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  # Theme
   theme_minimal(base_size = 14) +
   theme(
-    legend.position   = "top",
-    panel.grid.minor  = element_blank(),
-    strip.background  = element_rect(fill = "grey90", color = NA),
-    strip.text        = element_text(face = "bold")
+    legend.position  = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
   )
 
 p_rk
 
-# Save plot
-ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
+# Save if needed
+ggsave("../plots/rk_metrics_monthly_rmse_mae.png", plot = p_rk, width = 10, height = 6, dpi = 300)
 ```
 
-```{r Analyse LM metrics}
+```{r Analyse MLR metrics}
+# Read mlr metrics
+lm_metrics <- read.csv("../rk_monthly_mean/lm_model_performance_summary.csv",
+                       stringsAsFactors = FALSE)
 
-# Read CSV with lm_metrics
-lm_metrics <- read.csv("../rk_results/lm_model_performance_summary.csv")
-
+# Create month_date (use month column; fallback to timestamp if needed)
 lm_metrics <- lm_metrics %>%
   mutate(
-    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = hour(datetime_calc)
+    month_date =
+      if ("month" %in% names(.)) {
+        as.Date(paste0(month, "-01"))
+      } else {
+        # Fallback if only 'timestamp' exists; adjust if your timestamp is hours -> *3600
+        as.Date(format(as.POSIXct(timestamp, origin = "1970-01-01", tz = "Europe/Berlin"),
+                       "%Y-%m-01"))
+      }
   )
 
-# Reshape to long format
+# Long format for R² metrics
 lm_metrics_long <- lm_metrics %>%
-  pivot_longer(cols = c(r_squared, adj_r_squared),
-               names_to = "metric",
-               values_to = "value")
+  pivot_longer(
+    cols = c(r_squared, adj_r_squared),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  arrange(month_date)
 
-# Filter year 2023
-lm_df_plot <- lm_metrics_long %>%
-  filter(year(date) == 2023)
+# Summer shading (JJA) – reuse if already defined
+if (!exists("summer_start") || !exists("summer_end")) {
+  yr <- year(min(lm_metrics_long$month_date, na.rm = TRUE))
+  summer_start <- as.Date(sprintf("%d-06-01", yr))
+  summer_end   <- as.Date(sprintf("%d-08-31", yr))
+}
 
-# Plot: Daily Evaluation of Multiple Linear Regression Model Performance
-p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  # Lines and points for model metrics
+# Plot: Monthly LM performance (R² & Adjusted R²)
+p_lm <- ggplot(lm_metrics_long,
+               aes(x = month_date, y = value, color = metric, group = metric)) +
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
   geom_line(linewidth = 1.2) +
-  geom_hline(
-    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),
-    color = "grey60"
-  ) +
   geom_point(size = 1.8) +
-  # Facet by date
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +
-  # Color and linetype scales
+  geom_hline(
+    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)")
+  ) +
   scale_color_manual(
-    values = c(
-      "r_squared"     = "#6699CC",
-      "adj_r_squared" = "#CC6677"
-    ),
-    labels = c(
-      "r_squared"     = expression(R^2),
-      "adj_r_squared" = expression(Adjusted~R^2)
-    )
+    values = c("r_squared" = "#6699CC", "adj_r_squared" = "#CC6677"),
+    labels = c("r_squared" = expression(R^2),
+               "adj_r_squared" = expression(Adjusted~R^2))
   ) +
   scale_linetype_manual(
     name   = "",
     values = c("Perfect Fit (R² = 1)" = "dotted")
   ) +
-  # Labels
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
+  scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0.01, 0.05))) +
   labs(
     title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
-    subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
-    x        = "Hour of the Day",
+    subtitle = "Monthly R² and Adjusted R² from models predicting monthly mean temperature",
+    x        = "Month",
     y        = "Metric Value",
-    color    = "Metrics"
+    color    = "Metrics",
+    caption  = "LOOCV = leave-one-out cross-validation"
   ) +
-  # X-axis ticks
-  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  # Theme
   theme_minimal(base_size = 14) +
   theme(
-    legend.position    = "top",
-    legend.box         = "horizontal",
-    panel.grid.minor   = element_blank(),
-    panel.spacing      = unit(0.8, "lines"),
-    strip.background   = element_rect(fill = "grey90", color = NA),
-    strip.text         = element_text(face = "bold")
+    legend.position  = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
   )
 
-# Show plot
 p_lm
 
-# Save plot
-ggsave("../plots/lm_metrics_by_day_01-01-2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+# Save if needed
+ggsave("../plots/lm_metrics_monthly_r2.png", plot = p_lm, width = 10, height = 6, dpi = 300)
+
 ```
-
-
-------------------------------------------------------------------------
-
-CURRENTLY EXCLUDED. IS PROXIMITY TO WATER COVARIATE
-
-Can be included, but destroys the results -> especially the visual appearance
-
-```{r}
-# Add proximity to water as another covariate
-
-# Convert grid data to point features
-points_vect <- as.points(grids)
-
-# Convert point vector to sf object for spatial analysis
-grid_sf <- st_as_sf(points_vect)
-
-# Load river network
-neckar <- st_read("../data/waterways/waterways_HD.gpkg")
-
-# Reproject to 32632
-neckar <- st_transform(neckar, crs = st_crs(temp))
-
-# Clip Neckar river to extent of the grid (AOI)
-neckar_clipped <- st_intersection(neckar, st_as_sfc(st_bbox(grid_sf)))
-
-# Calculate minimum distance from each grid point to the Neckar river
-grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
-  apply(1, min) %>%
-  as.numeric()
-
-# Cap at 500 meters to limit influence of distant points
-#grid_sf$dwater[grid_sf$dwater > 500] <- NA
-
-# Move 'dist_to_neckar' to first column
-grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
-```
-
-```{r}
-# Convert to SpatialPointsDataFrame
-grids_sp <- as(grid_sf, "Spatial")
-
-# Now to SpatialPixelsDataFrame
-gridded(grids_sp) <- TRUE
-
-# Convert to SpatialGridDataFrame
-grids_sp <- as(grids_sp, "SpatialGridDataFrame")
-
-str(grids_sp)
-```
-
-------------------------------------------------------------------------
