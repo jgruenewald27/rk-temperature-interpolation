@@ -1,0 +1,1051 @@
+---
+title: "RK_LM_monthly_mean"
+output: html_document
+date: "2025-10-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Libraries}
+
+# Load Required Libraries
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(corrplot)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
+--------------------------------------------------------------------------------
+
+```{r Load and preprocess data}
+# ================================================
+# DATA LOADING, CLEANING, AND COVARIATE PREPARATION
+# ================================================
+
+# ================================================
+# Complete data import and pre-processing
+
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Calculate hour count since epoch, rounded down to current hour
+temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+   filter(!entity_id %in% c(
+     "hd:DE_Heidelberg_69120_12:WeatherObserved",
+     "hd:DE_Heidelberg_69120_34:WeatherObserved",
+     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+     "hd:DE_Heidelberg_46:WeatherObserved"
+   ))
+
+# Check if exactly 4 stations were dropped
+length(unique(na.omit(temp_clean$entity_id)))
+length(unique(na.omit(temp_clean_station$entity_id)))
+
+temp_monthly_mean_2023 <- temp_clean_station %>%
+  # Restrict to year 2023
+  filter(year(dateobserved) == 2023) %>%
+  # Collapse to month (e.g. 2023-01-01, 2023-02-01, …)
+  mutate(month = floor_date(dateobserved, "month")) %>%
+  # Group by station and month
+  group_by(entity_id, month) %>%
+  summarise(
+    mm_temp = mean(temperature, na.rm = TRUE),  
+    sd_temp   = sd(temperature, na.rm = TRUE), 
+    n_obs     = n(),                              
+    .groups   = "drop"
+  )
+
+# ================================================
+# Import of pre-processed temp data and import and pre-processing of covariates 
+
+# consistent timezone for the whole script
+tz_berlin <- "Europe/Berlin"
+
+# Read admin boundaries of HD
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+
+# Reproject
+hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
+
+# Load the elevation data
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+dem <- terra::project(dem, y = crs(temp_monthly_mean_2023))
+
+# Load the elevation data
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the elevation data to match correct CRS
+tch <- terra::project(tch, y = crs(temp_monthly_mean_2023))
+
+# Check if the two covariates have the same crs
+crs(tch) == crs(dem)
+
+# Load the elevation data
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+
+# Reproject the elevation data to match correct CRS
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_monthly_mean_2023))
+
+# Check if CRS is correct
+crs(ghs_bh) == crs(dem)
+
+# ================================================
+# Create a Raster Stack for all covariate information
+
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
+
+# ================================================
+# Code to include lat and lon information in raster stack
+
+# Also add lat and lon to the raster stack
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+# ================================================
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+
+# Extract coordinates of the measurement stations
+# maybe use them as covariates
+
+# ================================================
+# # Extract coordinates and data into a data frame
+# coords <- st_coordinates(temp_clean_station_hm)
+# locs <- cbind(temp_clean_station_hm, coords)
+# locs <- as.data.frame(locs)
+# 
+# # Keep only one row per station and select relevant columns
+# station_coords <- locs %>%
+#   dplyr::distinct(entity_id, .keep_all = TRUE) %>%
+#   dplyr::select(entity_id, X, Y)
+# 
+# coordinates(station_coords) <- ~ X + Y
+# proj4string(station_coords) <- CRS(proj4string(grids_sp))
+# 
+# length(unique(stations$entity_id))
+
+# Shortcut: load the pre-processed layer
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+
+# Reproject
+station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+
+# Convert to SpatialPointsDataFrame
+station_coords <- as(station_coords_sf, "Spatial")
+
+temp_monthly_mean_2023
+```
+
+--------------------------------------------------------------------------------
+
+```{r create_output_folder}
+output_dir <- "../rk_monthly_mean"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Define subdirectories for specific output types
+variogram_dir <- file.path(output_dir, "variogram")
+cv_dir        <- file.path(output_dir, "cross_validation")
+rk_dir        <- file.path(output_dir, "rk_predictions")
+
+# Create subdirectories if they don't exist
+dir.create(variogram_dir, showWarnings = FALSE)
+dir.create(cv_dir, showWarnings = FALSE)
+dir.create(rk_dir, showWarnings = FALSE)
+```
+
+```{r main_loop}
+# ================================================
+# Loop through 24 hourly time stamps in `temp_clean_station_hm`
+# ================================================
+
+# Get unique time stamps
+timestamps <- unique(temp_monthly_mean_2023$month)[1:12]  
+
+# Counters + progress bar
+total     <- length(timestamps)                       
+completed <- 0L                                     
+skipped   <- 0L                                      
+pb <- txtProgressBar(min = 0, max = total, style = 3)
+#cat(sprintf("\n[%d/%d] Processing: month=%s  (%s)\n", i, total, ts, dt_lab))
+
+# Loop through each time stamp
+total_metrics <- data.frame()
+all_temp_data <- data.frame()
+
+for (i in seq_along(timestamps)) {                           
+  ts <- timestamps[i]                                    
+  dt_local <- ts                          # already POSIXct
+  dt_lab   <- format(dt_local, "%Y-%m")   # e.g. "2023-01"
+  dt_file  <- format(dt_local, "%Y_%m")   # safe for filenames
+  #cat(sprintf("\n[%d/%d] Processing: chour=%s  (%s)\n", i, total, ts, dt_lab))  
+
+  # ------------------------------------------------
+  # STEP 1: Filter hourly data and plot temperature
+  # ------------------------------------------------
+  
+  # Select temperature data for the current hour
+  sel_temp_hm <- temp_monthly_mean_2023 %>%
+    filter(month == ts)
+  
+  # Skip if fewer than 20 data points for current hour
+  if (nrow(sel_temp_hm) < 20) {                                 
+    skipped <- skipped + 1L                                       
+    cat("  → skipped (n < 20)\n")                          
+    next                                                         
+  }
+  
+  # Append the selected temperature data to full dataset
+  all_temp_data <- rbind(all_temp_data, sel_temp_hm)
+  
+  # Generate line plot showing hourly mean temperature for each station
+  # across the time range covered so far in the loop
+  p_all <- ggplot(all_temp_data, aes(x = month, y = mm_temp, color = entity_id, group = entity_id)) +  
+    geom_line() +
+    geom_point(size = 1) +
+    labs(title = "Hourly Mean Temperature at Each Station",        
+         x = "Date & Hour (Europe/Berlin)", y = "Mean Temperature (°C)", color = "Station") + 
+    scale_x_datetime(date_labels = "%d.%m\n%H:%M", date_breaks = "12 hours") +              
+    theme_minimal(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 0, hjust = 0.5))                                  
+  
+  # Save the temperature plot
+  ggsave(file.path(output_dir, "all_stations_hourly_mean_temperature.png"),
+         plot = p_all, width = 10, height = 6, dpi = 300)
+
+  # ------------------------------------------------
+  # STEP 2: Add covariates (elev, canopy, bldg) from grid
+  # ------------------------------------------------
+  
+  # Ensure sel_temp_hm is sf and POINT (one row per point)
+  sel_temp_hm <- st_as_sf(sel_temp_hm)
+  sel_temp_hm <- st_cast(sel_temp_hm, "POINT", warn = FALSE)  # avoid MULTIPOINT -> multiple rows
+    
+  # Convert Spatial object to RasterBrick
+  r_brick <- brick(grids_sp)
+  
+  # Convert RasterBrick to terra SpatRaster object
+  grid_terra <- rast(r_brick)
+  
+  # Extract raster values at the point locations
+  extracted_vals <- terra::extract(grid_terra, sel_temp_hm, ID = FALSE)
+
+  cat("\n>>> Month:", ts, "\n")
+  cat("sel_temp_hm rows:", nrow(sel_temp_hm), "\n")
+  cat("extracted_vals rows:", nrow(extracted_vals), "\n")
+  
+  if (nrow(sel_temp_hm) != nrow(extracted_vals)) {
+    cat("⚠️ Mismatch detected for month", ts, 
+        "(", nrow(sel_temp_hm), "vs", nrow(extracted_vals), ")\n")
+  }
+  
+  # Identify any stations where extraction returned NA
+  bad_rows <- which(!complete.cases(extracted_vals))
+  if (length(bad_rows) > 0) {
+    cat("Stations with missing raster data:\n")
+    print(sel_temp_hm$entity_id[bad_rows])
+  }
+  
+  # Combine the point data with the extracted raster values
+  temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
+  
+  # ------------------------------------------------
+  # STEP 3: Fit linear model and prepare spatial data
+  # ------------------------------------------------
+  
+  # Fit multiple linear regression model
+  lm.temp_shm <- lm(mm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
+  summary_lm <- summary(lm.temp_shm)
+  
+  # Compute residuals and predictions
+  pred <- predict(lm.temp_shm, temp_shm.ex)
+  resid <- temp_shm.ex$mm_temp - pred
+  
+  # Extract metrics
+  model_metrics <- data.frame(
+    timestamp      = ts,
+    r_squared      = summary_lm$r.squared,
+    adj_r_squared  = summary_lm$adj.r.squared,
+    f_statistic    = summary_lm$fstatistic[1],
+    f_pvalue       = pf(summary_lm$fstatistic[1],
+                        summary_lm$fstatistic[2],
+                        summary_lm$fstatistic[3],
+                        lower.tail = FALSE),
+    residual_se    = summary_lm$sigma,
+    rmse           = sqrt(mean(resid^2)),
+    mae            = mean(abs(resid)),
+    AIC            = AIC(lm.temp_shm),
+    BIC            = BIC(lm.temp_shm)
+  )
+  
+  # Append to tracking data frame
+  if (!exists("lm_metrics_all")) {
+    lm_metrics_all <- model_metrics
+  } else {
+    lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
+  }
+
+  # Save model's residuals back into original df as new column
+  temp_shm.ex$residuals <- resid
+  
+  # Convert df into spatial object using existing geometry and
+  # Convert MULTIPOINT geometries to POINT
+  temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
+  
+  st_crs(temp_shm.sf) <- st_crs(grids_sp)
+  
+  # ------------------------------------------------
+  # STEP 4: Compute anisotropy & fit directional variogram
+  # ------------------------------------------------
+  
+  # Compute empirical variogram map of model residuals
+  # This helps visualize spatial autocorrelation in all directions
+  varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
+                    # cutoff is half the spatial extent (or diameter) of the study area
+                    cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
+                    # scaled relative to the resolution of the grid
+                    width = 30 * grids_sp@grid@cellsize[1])
+
+  # Store cutoff and bin width values for reuse and labeling
+  cutoff_val <- sqrt(areaSpatialGrid(grids_sp)) / 2
+  width_val  <- 30 * grids_sp@grid@cellsize[1]
+  
+  # Report how many rows are in variogram map
+  cat("Variogram map has", nrow(as.data.frame(varmap)), "rows\n")
+  
+  # Define output filename for the variogram map plot
+  file_varmap <- file.path(variogram_dir, paste0(dt_file, "_variogram_map.png"))  
+  
+  # Plot and save the directional variogram map
+  png(file_varmap, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(varmap,
+         col.regions = grey(rev(seq(0, 1, 0.025))),
+         main = sprintf("Directional Variogram Map (cutoff: %.1f km, width: %.1f km)\n%s",  
+                        cutoff_val / 1000, width_val / 1000, dt_lab))
+  )
+  dev.off()
+  
+  # Compute directional variograms for North–South (0°) and East–West (90°)
+  rv.temp <- variogram(residuals ~ 1, temp_shm.sf, alpha = c(0, 45, 90, 135))
+
+  # Fit theoretical exponential variogram model to the directional variogram
+  # Compute experimental variogram
+  rv.temp <- variogram(residuals ~ 1, temp_shm.sf)
+  
+  # Try several initial models and pick the best fit
+  init_models <- list(
+    vgm("Sph"),
+    vgm("Exp"),
+    vgm("Gau")
+  )
+  
+  fit_list <- lapply(init_models, function(m) fit.variogram(rv.temp, m))
+  fit_errors <- sapply(fit_list, attr, "SSErr")
+  rvgm.temp <- fit_list[[which.min(fit_errors)]]
+
+  
+  # Define output filename for directional variogram fit plot
+  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_directional_variogram_fit.png"))  
+ 
+  # Plot the empirical and fitted directional variograms and save
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(rv.temp, rvgm.temp,
+         main = paste0("Directional Variogram Fit (0°, 45°, 90°, 135°)\n", dt_lab),   
+         plot.nu = FALSE, cex = 1.5, pch = "+", col = "black")
+  )
+  dev.off()
+  
+  # ------------------------------------------------
+  # STEP 5: Cross-validation of residual kriging model
+  # ------------------------------------------------
+
+  # Perform leave-one-out cross-validation (LOOCV) of the kriging model
+  cv_resid <- krige.cv(residuals ~ 1,
+                       locations = temp_shm.sf,
+                       model = rvgm.temp,
+                       nfold = nrow(temp_shm.sf),   # one fold per observation = LOOCV
+                       nmax = 10)                   # max number of neighbors used for prediction
+  
+  # Compute CV metrics
+  cv_rmse <- sqrt(mean(cv_resid$residual^2))
+  cv_mae  <- mean(abs(cv_resid$residual))
+  cv_me   <- mean(cv_resid$residual)
+  
+  cat("CV RMSE:", round(cv_rmse, 2), "\n")
+  cat("CV MAE :", round(cv_mae, 2), "\n")
+  cat("CV Bias:", round(cv_me, 2), "\n")
+  
+  # Create df with CV metrics for current timestamp
+  cv_metrics <- data.frame(
+    timestamp = ts,
+    cv_rmse   = cv_rmse,
+    cv_mae    = cv_mae,
+    cv_bias   = cv_me
+  )
+  
+  # Append metrics to tracking df across all time steps
+  if (!exists("cv_metrics_all")) {
+    cv_metrics_all <- cv_metrics
+  } else {
+    cv_metrics_all <- rbind(cv_metrics_all, cv_metrics)
+  }
+  
+  # Create and save scatterplot of predicted vs residual values from CV
+  p_cv <- ggplot(cv_resid, aes(x = var1.pred, y = residual)) +
+    geom_point() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(title = paste("Cross-validation Residuals\n", dt_lab), x = "Predicted", y = "Residual") +  
+    theme_minimal(base_size = 12)
+  
+  ggsave(filename = file.path(cv_dir, paste0(dt_file, "_cv_residuals_plot.png")),  
+         plot = p_cv, width = 8, height = 6, dpi = 300)
+
+  # ------------------------------------------------
+  # STEP 6: Predict regression trend and kriging residuals
+  # ------------------------------------------------
+    
+  # Define a gstat object for kriging using the fitted residual variogram
+  g.resid <- gstat(
+    id = c("residuals"),
+    formula = residuals ~ 1,
+    data = temp_shm.sf,
+    nmax = 31,
+    model = rvgm.temp
+  )
+  
+  # Predict the temperature trend component using the regression model
+  locTEMP.reg <- predict(lm.temp_shm, grids_sp)
+  
+  # OK of the regression residuals to model spatial autocorrelation
+  locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
+  
+  # Combine the regression prediction with kriged residuals to get final RK predictions
+  rk.pred <- locTEMP.reg + locTEMP$residuals.pred
+  
+  # Add the RK predictions as a new variable to the spatial grid object
+  grid_out <- grids_sp
+  grids_sp$rk_pred <- rk.pred
+  
+  # Define output filename for the RK prediction map
+  rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
+  
+  # Generate and save the RK prediction map
+  png(rk_file_img, width = 8, height = 6, units = "in", res = 300)
+  print(
+    spplot(grids_sp, "rk_pred",
+           main = paste("Regression Kriging Prediction (°C)\n", dt_lab),   
+           sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
+  )
+  dev.off()
+  
+  # ------------------------------------------------
+  # STEP 7: Evaluate RK predictions at observation stations
+  # ------------------------------------------------
+  
+  # Match station coordinates with observed stations only
+  obs_coords <- st_coordinates(temp_shm.sf)
+  
+  # Convert to SpatialPoints object with same CRS as prediction grid
+  obs_stations <- SpatialPoints(coords = obs_coords, proj4string = CRS(proj4string(grids_sp)))
+  
+  # Extract only at observed station locations
+  rk_at_obs <- sp::over(obs_stations, grids_sp)
+  
+  # Combine predictions with observations
+  rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$mm_temp)
+
+  # Check if predicted and observed data match in length
+  cat("Predicted rows:", nrow(rk_at_obs), "\n")
+  cat("Observed rows :", length(temp_shm.sf$mm_temp), "\n")
+  
+  # Calculate prediction error
+  rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
+  
+  # Calculate evaluation metrics for RK performance
+  rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
+  mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
+  bias <- mean(rk_eval$residual, na.rm = TRUE)
+  
+  cat("RK RMSE :", round(rmse, 2), "\n")
+  cat("RK MAE  :", round(mae, 2), "\n")
+  cat("RK Bias :", round(bias, 2), "\n")
+  
+  # Store metrics in df for current timestamp
+  rk_metrics <- data.frame(
+    timestamp = ts,
+    rk_rmse   = rmse,
+    rk_mae    = mae,
+    rk_bias   = bias
+  )
+  
+  # Append metrics to cumulative RK metrics tracking object
+  if (!exists("rk_metrics_all")) {
+    rk_metrics_all <- rk_metrics
+  } else {
+    rk_metrics_all <- rbind(rk_metrics_all, rk_metrics)
+  }
+  
+  # Save RK residuals plot
+  rk_resid_plot <- ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
+    geom_point() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(title = paste("RK Prediction Residuals at Stations\n", dt_lab),   
+         x = "RK Predicted (°C)", y = "Residual (Observed - Predicted)") +
+    theme_minimal(base_size = 12)
+  
+  ggsave(filename = file.path(rk_dir, paste0(dt_file, "_rk_residuals_plot.png")),  
+         plot = rk_resid_plot, width = 8, height = 6, dpi = 300)
+  
+  completed <- completed + 1L 
+  setTxtProgressBar(pb, completed)
+  cat("\n")
+  cat(sprintf("  → done. Completed: %d/%d (skipped: %d)\n",      
+              completed, total, skipped))                        
+}
+
+# Close progress bar + final summary
+close(pb)                                                        
+cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
+            completed, total, skipped))                         
+
+# ---- Save LM metrics ----
+metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
+if (exists("lm_metrics_all")) {
+  lm_metrics_all$month <- format(
+    as.POSIXct(lm_metrics_all$timestamp, origin = "1970-01-01", tz = "Europe/Berlin"),
+    "%Y-%m"
+  )
+  # Put month first; drop raw timestamp if you don't want it in the file
+  lm_out <- lm_metrics_all[, c("month", setdiff(names(lm_metrics_all), c("month", "timestamp")))]
+  write.csv(lm_out, metrics_file, row.names = FALSE)
+}
+
+# ---- Save CV metrics ----
+cv_file <- file.path(output_dir, "cross_validation_metrics.csv")
+if (exists("cv_metrics_all")) {
+  cv_metrics_all$month <- format(
+    as.POSIXct(cv_metrics_all$timestamp, origin = "1970-01-01", tz = "Europe/Berlin"),
+    "%Y-%m"
+  )
+  cv_out <- cv_metrics_all[, c("month", setdiff(names(cv_metrics_all), c("month", "timestamp")))]
+  write.csv(cv_out, cv_file, row.names = FALSE)
+}
+
+# ---- Save RK metrics ----
+rk_file <- file.path(output_dir, "rk_metrics.csv")
+if (exists("rk_metrics_all")) {
+  rk_metrics_all$month <- format(
+    as.POSIXct(rk_metrics_all$timestamp, origin = "1970-01-01", tz = "Europe/Berlin"),
+    "%Y-%m"
+  )
+  rk_out <- rk_metrics_all[, c("month", setdiff(names(rk_metrics_all), c("month", "timestamp")))]
+  write.csv(rk_out, rk_file, row.names = FALSE)
+}
+```
+
+------------------------------------------------------------------------
+
+Plots to analyse model performance metrices
+
+```{r}
+# Read CSV (columns: month, cv_rmse, cv_mae, cv_bias)
+cv_metrics <- read.csv("../rk_monthly_mean/cross_validation_metrics.csv",
+                       stringsAsFactors = FALSE)
+
+# Prepare monthly date and tidy format
+cv_metrics_long <- cv_metrics %>%
+  mutate(
+    month_date = as.Date(paste0(month, "-01")),       # e.g. "2023-01" -> Date
+    .keep = "all"
+  ) %>%
+  # keep just the two metrics you want to compare; add "cv_bias" if you also want it in the same plot
+  pivot_longer(
+    cols = c(cv_rmse, cv_mae),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  arrange(month_date)
+
+# Plot: Monthly Evaluation of the Regression-Kriging CV Metrics (RMSE & MAE)
+p_cv <- ggplot(cv_metrics_long,
+               aes(x = month_date, y = value, color = metric, group = metric)) +
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.8) +
+  geom_hline(
+    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)")
+  ) +
+  scale_color_manual(
+    values = c("cv_rmse" = "#6699CC", "cv_mae" = "#CC6677"),
+    labels = c("cv_rmse" = "Root Mean Square Error (RMSE)",
+               "cv_mae"  = "Mean Absolute Error (MAE)")
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Prediction (Error = 0)" = "dotted")
+  ) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
+  labs(
+    title    = "Monthly Evaluation of Regression-Kriging LOOCV Metrics",
+    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting monthly mean temperature",
+    x        = "Month",
+    y        = "Error Metric [°C]",
+    color    = "Metrics",
+    caption = "LOOCV = leave-one-out cross-validation"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+p_cv
+
+# Optional: a separate plot for monthly bias (often centered near 0, separate y-scale helps)
+p_bias <- ggplot(cv_metrics %>%
+                   mutate(month_date = as.Date(paste0(month, "-01"))) %>%
+                   arrange(month_date),
+                 aes(x = month_date, y = cv_bias, group = 1)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line() +
+  geom_point() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
+  labs(
+    title = "Monthly LOOCV Bias",
+    x = "Month",
+    y = "Bias [°C]"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save if needed
+ggsave("../plots/cv_metrics_monthly_rmse_mae.png", plot = p_cv, width = 10, height = 6, dpi = 300)
+# ggsave("../plots/cv_metrics_monthly_bias.png", plot = p_bias, width = 10, height = 4, dpi = 300)
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+# install.packages("ggrepel") if needed
+library("ggrepel")
+
+# cv_metrics: columns month, cv_rmse, cv_mae, cv_bias
+df_long <- cv_metrics %>%
+  mutate(month_date = as.Date(paste0(month, "-01"))) %>%
+  pivot_longer(c(cv_rmse, cv_mae), names_to = "metric", values_to = "value") %>%
+  arrange(month_date)
+
+# Okabe–Ito palette (color-blind friendly)
+cols <- c(cv_rmse = "#0072B2",  # blue
+          cv_mae  = "#D55E00")  # orange
+
+# last points per series for direct labels
+lab_data <- df_long %>% group_by(metric) %>% slice_max(month_date, n = 1) %>% ungroup()
+
+# summer shading (June–Aug); adjust if your climate story differs
+yr <- year(min(df_long$month_date, na.rm = TRUE))
+summer_start <- as.Date(sprintf("%d-06-01", yr))
+summer_end   <- as.Date(sprintf("%d-08-31", yr))
+
+p_cv <- ggplot(df_long, aes(month_date, value, color = metric, group = metric)) +
+  # season band (draw first)
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2, stroke = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  # direct labels near last month
+  geom_label_repel(
+    data = lab_data,
+    aes(label = ifelse(metric == "cv_rmse", "RMSE", "MAE")),
+    show.legend = FALSE, fill = "white", size = 4, label.r = unit(2, "pt"),
+    min.segment.length = 0, nudge_x = 15
+  ) +
+  scale_color_manual(values = cols, labels = c(cv_mae = "Mean Absolute Error (MAE)",
+                                               cv_rmse = "Root Mean Square Error (RMSE)")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m", expand = expansion(mult = c(.01,.05))) +
+  labs(
+    title    = "Monthly Evaluation of Regression-Kriging LOOCV Metrics",
+    subtitle = "RMSE and MAE for monthly mean temperature (shaded = Jun–Aug)",
+    x = "Month",
+    y = "Error [°C]",
+    color = NULL,
+    caption = "LOOCV = leave-one-out cross-validation"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position   = "none",
+    panel.grid.minor  = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x       = element_text(angle = 45, hjust = 1)
+  )
+
+p_cv
+# ggsave("cv_metrics_monthly_rmse_mae.png", p_cv, width = 11, height = 6, dpi = 300)
+
+```
+
+
+```{r Analyse CV metrics}
+# Read CSV
+cv_metrics <- read.csv("../rk_monthly_mean/cross_validation_metrics.csv")
+
+cv_metrics <- cv_metrics %>%
+  mutate(
+    # Rückrechnung von Stunden seit 1970-01-01
+    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    
+    # Zusätzliche Helferspalten
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)
+  )
+
+# Reshape to long format
+cv_metrics_long <- cv_metrics %>%
+  pivot_longer(cols = c(cv_rmse, cv_mae),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter nur 2023
+df_plot <- cv_metrics_long %>%
+  filter(year(date) == 2023)
+
+# Plot: Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
+p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  # Lines, reference line, and points
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
+    color = "grey60"
+  ) +
+  geom_point(size = 1.8) +
+  # Facet by date
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
+  # Color and linetype scales
+  scale_color_manual(
+    values = c(
+      "cv_rmse" = "#6699CC",
+      "cv_mae"  = "#CC6677"
+    ),
+    labels = c(
+      "cv_rmse" = "Root Mean Square Error (RMSE)",
+      "cv_mae"  = "Mean Absolute Error (MAE)"
+    )
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Prediction (Error = 0)" = "dotted")
+  ) +
+  # Labels
+  labs(
+    title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
+    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Error Metric [°C]",
+    color    = "Metrics"
+  ) +
+  # X-axis breaks
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold")
+  )
+
+p_cv
+
+# Save the plot
+#ggsave("../plots/cv_metrics_by_day_01-01-2023.png", plot = p_cv, width = 12, height = 8, dpi = 300)
+```
+
+```{r Analyse RK metrics}
+
+# Read CSV with rk_metrics
+rk_metrics <- read.csv("../rk_results_week_01/rk_metrics.csv")
+
+rk_metrics <- rk_metrics %>%
+  mutate(
+    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)
+  )
+
+# Reshape to long format
+rk_metrics_long <- rk_metrics %>%
+  pivot_longer(cols = c(rk_rmse, rk_mae),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter year 2023
+df_plot <- rk_metrics_long %>%
+  filter(year(date) == 2023)
+
+# Plot: Daily Evaluation of the Regression-Kriging Model Performance Metrics
+p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  # Lines, reference line, and points
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
+    color = "grey60"
+  ) +
+  geom_point(size = 1.8) +
+  # Facet by date
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
+  # Color and linetype scales
+  scale_color_manual(
+    values = c(
+      "rk_rmse" = "#6699CC",
+      "rk_mae"  = "#CC6677"
+    ),
+    labels = c(
+      "rk_rmse" = "Root Mean Square Error (RMSE)",
+      "rk_mae"  = "Mean Absolute Error (MAE)"
+    )
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Prediction (Error = 0)" = "dotted")
+  ) +
+  # Labels
+  labs(
+    title    = "Daily Evaluation of the Regression-Kriging Model Performance Metrics",
+    subtitle = "Hourly RMSE and MAE values from models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Error Metric [°C]",
+    color    = "Metrics"
+  ) +
+  # X-axis breaks
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold")
+  )
+
+p_rk
+
+# Save plot
+ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
+```
+
+```{r Analyse LM metrics}
+
+# Read CSV with lm_metrics
+lm_metrics <- read.csv("../rk_results/lm_model_performance_summary.csv")
+
+lm_metrics <- lm_metrics %>%
+  mutate(
+    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    date = as.Date(datetime_calc),
+    hour = hour(datetime_calc)
+  )
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter year 2023
+lm_df_plot <- lm_metrics_long %>%
+  filter(year(date) == 2023)
+
+# Plot: Daily Evaluation of Multiple Linear Regression Model Performance
+p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  # Lines and points for model metrics
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),
+    color = "grey60"
+  ) +
+  geom_point(size = 1.8) +
+  # Facet by date
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +
+  # Color and linetype scales
+  scale_color_manual(
+    values = c(
+      "r_squared"     = "#6699CC",
+      "adj_r_squared" = "#CC6677"
+    ),
+    labels = c(
+      "r_squared"     = expression(R^2),
+      "adj_r_squared" = expression(Adjusted~R^2)
+    )
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Fit (R² = 1)" = "dotted")
+  ) +
+  # Labels
+  labs(
+    title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
+    subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Metric Value",
+    color    = "Metrics"
+  ) +
+  # X-axis ticks
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position    = "top",
+    legend.box         = "horizontal",
+    panel.grid.minor   = element_blank(),
+    panel.spacing      = unit(0.8, "lines"),
+    strip.background   = element_rect(fill = "grey90", color = NA),
+    strip.text         = element_text(face = "bold")
+  )
+
+# Show plot
+p_lm
+
+# Save plot
+ggsave("../plots/lm_metrics_by_day_01-01-2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+```
+
+
+------------------------------------------------------------------------
+
+CURRENTLY EXCLUDED. IS PROXIMITY TO WATER COVARIATE
+
+Can be included, but destroys the results -> especially the visual appearance
+
+```{r}
+# Add proximity to water as another covariate
+
+# Convert grid data to point features
+points_vect <- as.points(grids)
+
+# Convert point vector to sf object for spatial analysis
+grid_sf <- st_as_sf(points_vect)
+
+# Load river network
+neckar <- st_read("../data/waterways/waterways_HD.gpkg")
+
+# Reproject to 32632
+neckar <- st_transform(neckar, crs = st_crs(temp))
+
+# Clip Neckar river to extent of the grid (AOI)
+neckar_clipped <- st_intersection(neckar, st_as_sfc(st_bbox(grid_sf)))
+
+# Calculate minimum distance from each grid point to the Neckar river
+grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
+  apply(1, min) %>%
+  as.numeric()
+
+# Cap at 500 meters to limit influence of distant points
+#grid_sf$dwater[grid_sf$dwater > 500] <- NA
+
+# Move 'dist_to_neckar' to first column
+grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
+```
+
+```{r}
+# Convert to SpatialPointsDataFrame
+grids_sp <- as(grid_sf, "Spatial")
+
+# Now to SpatialPixelsDataFrame
+gridded(grids_sp) <- TRUE
+
+# Convert to SpatialGridDataFrame
+grids_sp <- as(grids_sp, "SpatialGridDataFrame")
+
+str(grids_sp)
+```
+
+------------------------------------------------------------------------
