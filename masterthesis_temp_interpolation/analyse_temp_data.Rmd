@@ -360,6 +360,59 @@ temp_clean_station_hm <- temp_clean_station %>%
 
 --------------------------------------------------------------------------------
 
+```{r Check temperature distribution of hourly mean temp using bins of 2°C}
+# Build global 1 °C breaks from the hourly mean data (rounded outward)
+tmin_hour <- floor(min(temp_clean_station_hm$hm_temp, na.rm = TRUE) / 1) * 1
+tmax_hour <- ceiling(max(temp_clean_station_hm$hm_temp, na.rm = TRUE) / 1) * 1
+breaks_1C <- seq(tmin_hour, tmax_hour, by = 1)
+
+# Add clean labels
+labs_1C <- sprintf("%d to %d", breaks_1C[-length(breaks_1C)], breaks_1C[-1])
+
+# Bin + count
+counts_1C_hourly <- temp_clean_station_hm %>%
+  transmute(bin = cut(
+    hm_temp,
+    breaks = breaks_1C,
+    labels = labs_1C,
+    right = FALSE,
+    include_lowest = TRUE,
+    ordered_result = TRUE
+  )) %>%
+  filter(!is.na(bin)) %>%
+  count(bin, name = "n") %>%
+  tidyr::complete(bin = factor(labs_1C, levels = labs_1C, ordered = TRUE), fill = list(n = 0L)) %>%
+  mutate(pct = n / sum(n), cum_pct = cumsum(pct))
+
+# Plot: Hourly mean temperature distribution using 1°C bins
+p_hourly_dist <- ggplot(counts_1C_hourly, aes(x = bin, y = n)) +
+  geom_col(fill = "#1E90FF", color = "black", alpha = 0.7) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(labels = scales::label_number(big.mark = ",", accuracy = 1)) +
+  labs(
+    title = "Hourly Mean Temperature Distribution — Heidelberg (2023, 1°C bins)",
+    x = "Temperature bin (°C)",
+    y = "Count",
+    caption = "Source: Pre-processed hourly mean sensor data"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Display plot
+p_hourly_dist
+
+# Save PNG
+ggsave(
+  filename = file.path("../plots", paste0("hourly_mean_temperature_distribution_Heidelberg_2023", ".png")),
+  plot = p_hourly_dist,
+  width = 10, height = 6, units = "in", dpi = 300
+)
+```
+
+
+
+--------------------------------------------------------------------------------
+
 Heatmap of temperature patterns
 
 ```{r}
