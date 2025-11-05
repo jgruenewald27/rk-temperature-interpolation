@@ -670,7 +670,7 @@ p_cv <- ggplot(cv_metrics_long,
   ) +
   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
   labs(
-    title    = "Monthly Evaluation of Regression-Kriging LOOCV Metrics",
+    title    = "Monthly Evaluation of the LOOCV Metrics for the Kriging Model",
     subtitle = "Monthly RMSE and MAE values from LOOCV of models predicting monthly mean temperature",
     x        = "Month",
     y        = "Error Metric [°C]",
@@ -738,8 +738,7 @@ p_rk <- ggplot(rk_metrics_long,
     subtitle = "Monthly RMSE and MAE values from predictions evaluated at station locations",
     x        = "Month",
     y        = "Error Metric [°C]",
-    color    = "Metrics",
-    caption  = "LOOCV = leave-one-out cross-validation"
+    color    = "Metrics"
   ) +
   theme_minimal(base_size = 14) +
   theme(
@@ -810,13 +809,12 @@ p_lm <- ggplot(lm_metrics_long,
   scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
   scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0.01, 0.05))) +
   labs(
-    title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
+    title    = "Monthly Evaluation of Multiple Linear Regression Model Performance",
     subtitle = "Monthly R² and Adjusted R² from models predicting monthly mean temperature",
     x        = "Month",
     y        = "Metric Value",
-    color    = "Metrics",
-    caption  = "LOOCV = leave-one-out cross-validation"
-  ) +
+    color    = "Metrics"
+    ) +
   theme_minimal(base_size = 14) +
   theme(
     legend.position  = "top",
