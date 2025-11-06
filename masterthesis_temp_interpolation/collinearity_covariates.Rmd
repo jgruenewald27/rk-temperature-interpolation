@@ -46,58 +46,72 @@ library(car)
 
 ------------------------------------------------------------------------
 
-```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
+```{r Load and preprocess data}
+# ================================================
+# DATA LOADING, CLEANING, AND COVARIATE PREPARATION
+# ================================================
 
-# Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+# ================================================
+# Complete data import and pre-processing
 
-# Removes rows where temp is NA
-temp <- temp %>% filter(!is.na(temperature))
-
-# Reproject the data for Germany
-temp <- st_transform(temp, crs="EPSG:32632")
-
-# Clean the data from outliers -> currently working with hard, manual breaks
-# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
-temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
-
-# Calculate hour count since epoch, rounded down to current hour
-temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
-
-# Drop all measurement stations which didn't collect data the entire year around
-temp_clean_station <- temp_clean %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
-  filter(!entity_id %in% c(
-    "hd:DE_Heidelberg_69120_12:WeatherObserved",
-    "hd:DE_Heidelberg_69120_34:WeatherObserved",
-    "hd:DE_Heidelberg_69123_41:WeatherObserved",
-    "hd:DE_Heidelberg_46:WeatherObserved"
-  ))
-
-# Check if exactly 4 stations were dropped
-length(unique(na.omit(temp_clean$entity_id)))
-length(unique(na.omit(temp_clean_station$entity_id)))
+# # Read temperature data for the entire year of 2023
+# temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+# 
+# # Removes rows where temp is NA
+# temp <- temp %>% filter(!is.na(temperature))
+# 
+# # Reproject the data for Germany
+# temp <- st_transform(temp, crs="EPSG:32632")
+# 
+# # Clean the data from outliers -> currently working with hard, manual breaks
+# # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+# temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+# 
+# # Calculate hour count since epoch, rounded down to current hour
+# temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+# 
+# # Drop all measurement stations which didn't collect data the entire year around
+# temp_clean_station <- temp_clean %>%
+#   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+#   filter(!entity_id %in% c(
+#     "hd:DE_Heidelberg_69120_12:WeatherObserved",
+#     "hd:DE_Heidelberg_69120_34:WeatherObserved",
+#     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+#     "hd:DE_Heidelberg_46:WeatherObserved"
+#   ))
+# 
+# # Check if exactly 4 stations were dropped
+# length(unique(na.omit(temp_clean$entity_id)))
+# length(unique(na.omit(temp_clean_station$entity_id)))
 
 # Calculate hourly mean temp for cleaned data
-temp_clean_station_hm <- temp_clean_station %>%
-    group_by(entity_id, chour) %>%
-    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
-    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
-```
+# temp_clean_station_hm <- temp_clean_station %>%
+#     group_by(entity_id, chour) %>%
+#     summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+#     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
 
-```{r Read AOI}
+# ================================================
+# Import of pre-processed temp data and import and pre-processing of covariates 
+
+# consistent timezone for the whole script
+tz_berlin <- "Europe/Berlin"
+
+#Shortcut -> import pre-processed hourly means
+temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+
+temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
+
 # Read admin boundaries of HD
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
-```
 
-------------------------------------------------------------------------
+# Reproject
+hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
 
-```{r Load and pre-process environmental covariates}
 # Load the elevation data
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-dem <- terra::project(dem, "EPSG:32632")
+dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 
 # Load the elevation data
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
@@ -107,7 +121,7 @@ tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
 tch[tch == 101] <- NA
 
 # Reproject the elevation data to match correct CRS
-tch <- terra::project(tch, "EPSG:32632")
+tch <- terra::project(tch, y = crs(temp_clean_station_hm))
 
 # Check if the two covariates have the same crs
 crs(tch) == crs(dem)
@@ -116,15 +130,92 @@ crs(tch) == crs(dem)
 ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 
 # Reproject the elevation data to match correct CRS
-ghs_bh <- terra::project(ghs_bh, "EPSG:32632")
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
 # Check if CRS is correct
 crs(ghs_bh) == crs(dem)
+
+# ================================================
+# Create a Raster Stack for all covariate information
+
+# Check resolution of each raster
+terra::res(dem)
+terra::res(tch)
+terra::res(ghs_bh)
+
+# Align TCH and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Stack all layers
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
+
+# ================================================
+# Code to include lat and lon information in raster stack
+
+# Also add lat and lon to the raster stack
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+# ================================================
+# Conversion when running the analysis without proximity to water
+# Preparation of grid as a covariate for running RK
+
+# Convert SpatRaster to RasterLayer (raster package)
+grids_ras <- stack(grids)
+
+# Now convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+
+grids_sp@data
+
+# Extract coordinates of the measurement stations
+# maybe use them as covariates
+
+# ================================================
+# # Extract coordinates and data into a data frame
+# coords <- st_coordinates(temp_clean_station_hm)
+# locs <- cbind(temp_clean_station_hm, coords)
+# locs <- as.data.frame(locs)
+# 
+# # Keep only one row per station and select relevant columns
+# station_coords <- locs %>%
+#   dplyr::distinct(entity_id, .keep_all = TRUE) %>%
+#   dplyr::select(entity_id, X, Y)
+# 
+# coordinates(station_coords) <- ~ X + Y
+# proj4string(station_coords) <- CRS(proj4string(grids_sp))
+# 
+# length(unique(stations$entity_id))
+
+# Shortcut: load the pre-processed layer
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+
+# Reproject
+station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+
+# Convert to SpatialPointsDataFrame
+station_coords <- as(station_coords_sf, "Spatial")
 ```
 
 Set Gaussian filter
 
-```{r}
+```{r Set Gaussian filter}
 # The logic: Trees have a cooling effect on the surrounding area via shade, evapotranspiration, etc.
 # That effect is strongest closest to the tree and fades with distance.
 # A Gaussian filter models this natural distance decay very well.
@@ -142,61 +233,7 @@ plot(tch, main ="Original Input Raster Tree Canopy Height ") #plot orig
 plot(tch, main="Gaussian Tree Cooling Effect (60 m)") #plot Gaussian filter in 60 m distaince
 ```
 
-------------------------------------------------------------------------
-
-```{r Create a Raster Stack for all the covariate information}
-
-# Check resolution of each raster
-terra::res(dem)
-terra::res(tch)
-terra::res(ghs_bh)
-
-# Align TCH and building height to DEM resolution and extent
-tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
-ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
-
-# Stack all layers
-env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
-
-# Rename layers for clarity
-names(env_stack) <- c("elevation", "canopy_height", "building_height")
-
-env_stack
-```
-
-```{r Add lat and lon to the raster stack}
-
-# Create coordinate rasters
-lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
-lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
-
-# Convert to raster layers
-lon_raster <- dem
-lat_raster <- dem
-values(lon_raster) <- lon
-values(lat_raster) <- lat
-names(lon_raster) <- "lon"
-names(lat_raster) <- "lat"
-```
-
-```{r Stack the three raster layer}
-
-# Stack the three raster layers
-grids <- c(env_stack, lon_raster, lat_raster)
-
-grids
-
-# Conversion when running the analysis without proximity to water
-# Preparation of grid as a covariate for running RK
-
-# Convert SpatRaster to RasterLayer (raster package)
-grids_ras <- stack(grids)
-
-# Now convert to SpatialGridDataFrame
-grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
-
-grids_sp@data
-```
+--------------------------------------------------
 
 ```{r Plot all covariates}
 
@@ -294,6 +331,17 @@ The results fit really well to Heidelberg and its surroundings and describe how 
 -	Elevation vs. Building height (r ≈ −0.34): Moderate negative correlation — taller buildings are concentrated at lower elevations (valley floor).
 -	Canopy vs. Building height (r ≈ −0.36): Moderate negative correlation — built-up areas generally coincide with less canopy, and vice versa (they tend not to co-occur).
 
+--------------------------------------------------
+
+```{r Distribution of covariates}
+par(mfrow = c(1,3))
+terra::hist(env_stack$elevation,       main = "Elevation",       xlab = "m")
+terra::hist(env_stack$canopy_height,   main = "Canopy height",   xlab = "m")
+terra::hist(env_stack$building_height, main = "Building height", xlab = "m")
+par(mfrow = c(1,1))
+```
+
+
 ------------------------------------------------------------------------
 
 ```{r Adding covariates to temperature data}
@@ -317,6 +365,55 @@ temp_clean_station_hm_cov <- cbind(as.data.frame(temp_clean_station_hm), ex_agg)
 
 str(temp_clean_station_hm_cov)
 ```
+
+Z-score normalization: mean of 0 and standard deviation of 1
+
+```{r}
+covars <- c("elevation", "canopy_height", "building_height")   # add "lon","lat" if you want
+
+# learn mean/sd
+mu  <- sapply(temp_clean_station_hm_cov[, covars], function(x) mean(x, na.rm = TRUE))
+sdv <- sapply(temp_clean_station_hm_cov[, covars], function(x) sd(x,   na.rm = TRUE))
+
+# guard against zero-variance columns
+zero_sd <- sdv == 0 | is.na(sdv)
+if (any(zero_sd)) {
+  warning("Zero-variance covariate(s) set to 0: ",
+          paste(names(sdv)[zero_sd], collapse = ", "))
+  sdv[zero_sd] <- 1
+}
+
+# add *_z columns
+for (nm in covars) {
+  temp_clean_station_hm_cov[[paste0(nm, "_z")]] <-
+    (temp_clean_station_hm_cov[[nm]] - mu[[nm]]) / sdv[[nm]]
+}
+
+# (optional) keep the parameters for reproducibility
+z_params <- data.frame(covariate = names(mu), mean = as.numeric(mu), sd = as.numeric(sdv))
+```
+
+```{r}
+# long format for faceting
+df_long <- temp_clean_station_hm_cov %>%
+  select(all_of(covars)) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  filter(!is.na(value))
+
+# histograms
+p_cov <- ggplot(df_long, aes(x = value)) +
+  geom_histogram(bins = 40, alpha = 0.85) +
+  facet_wrap(~ variable, scales = "free", ncol = 1) +
+  labs(
+    title = "Distributions of Covariates",
+    x = NULL, y = "Count"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.minor = element_blank())
+
+p_cov
+```
+
 
 ------------------------------------------------------------------------
 
@@ -366,8 +463,10 @@ p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
   theme_bw() +
   theme(strip.text = element_text(face = "bold"))
 
+p_corr_temp_cov
+
 # Save output to file
-ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 4, dpi = 300)
+# ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 4, dpi = 300)
 ```
 
 ------------------------------------------------------------------------
@@ -447,6 +546,36 @@ vif(mlr_coll)
 ```
 
 None of the predictors (elevation, canopy height, building height) show problematic multicollinearity. All VIFs are under 5, suggesting the model is stable with respect to predictor relationships.
+
+------------------------------------------------------------------------
+
+```{r}
+mlr_timestamp_sel_469139 <- lm(hm_temp ~ elevation_z + canopy_height_z + building_height_z, data = sel_469139)
+summary(mlr_timestamp_sel_469139)
+
+par(mfrow=c(2,2))
+plot(mlr_timestamp_sel_469139)
+par(mfrow=c(1,1))
+```
+
+```{r}
+mlr_timestamp_sel_469140 <- lm(hm_temp ~ elevation + canopy_height + building_height, data = sel_469140)
+summary(mlr_timestamp_sel_469140)
+
+par(mfrow=c(2,2))
+plot(mlr_timestamp_sel_469140)
+par(mfrow=c(1,1))
+```
+
+
+```{r}
+mlr_timestamp_sel_469141 <- lm(hm_temp ~ elevation + canopy_height + building_height, data = sel_469141)
+summary(mlr_timestamp_sel_469141)
+
+par(mfrow=c(2,2))
+plot(mlr_timestamp_sel_469141)
+par(mfrow=c(1,1))
+```
 
 ------------------------------------------------------------------------
 
