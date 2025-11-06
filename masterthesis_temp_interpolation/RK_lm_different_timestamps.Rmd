@@ -1207,21 +1207,21 @@ ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_res
 ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
 ```
 
-```{r}
+```{r Robust Performance Metrics and Regression Fit}
+
 # Robust central tendency
 median_bias <- median(resid, na.rm = TRUE)
-mdae        <- median(abs(resid), na.rm = TRUE)
 
-# R² and regression line (does the model need an offset/slope correction?)
-fit <- lm(df$`2_22_074_ist_t14_rev01` ~ df$rk_pred)
-summary(fit)$coefficients   # intercept/slope
-summary(fit)$r.squared
+# Linear regression between reference and model temperatures
+lm_rk_ref_temp <- lm(ref_temp ~ rk_temp, data = comparison_df)
+summary(lm_rk_ref_temp)$coefficients 
+summary(lm_rk_ref_temp)$r.squared    
 
-# Normalized errors (help compare across days)
-rng <- diff(range(df$`2_22_074_ist_t14_rev01`, na.rm = TRUE))
-nrmse <- rmse / rng
-
+# Print summary results
+c(median_bias = median_bias, R2 = summary(lm_rk_ref_temp)$r.squared)
 ```
+
+The analysis shows that the RK model reproduces the general spatial temperature pattern well (R² = 0.78) but consistently predicts higher absolute temperatures than the reference. With a median bias of about +8.7 °C (in this case the same as mean_bias) and a regression slope of 2.7, the results indicate that the RK model is overall too warm and exhibits a narrower temperature range, underrepresenting the spatial variability present in the reference data.
 
 ```{r}
 # Ensure CRS match between rasters and vector
