@@ -927,9 +927,10 @@ grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
 grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
 ```
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
-Compare the Stadtklima-Analyse with my RK prediction surface
+Comparison of the Urban Climate Analysis of HD (2023) with the 
+RK temperature prediction surface
 
 ```{r Compare the Stadtklima-Analyse with my RK prediction surface}
 
@@ -1102,6 +1103,7 @@ p_rk_ref
 # ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
 ```
 
+Short explanation of the following chunk:
 The following chunk is a quality-control checkpoint. It doesn’t change the analysis output, but it ensures that what I compare is valid (same units, same grid, no hidden bias).
 Keep it as a safety check but might omit it from the final report.
 
@@ -1127,6 +1129,7 @@ stopifnot(isTRUE(all.equal(terra::res(ref30),  terra::res(mod))))
 stopifnot(isTRUE(all.equal(terra::ext(ref30),  terra::ext(mod))))
 ```
 
+Short interpretation of the residual summary metrics:
 The RK model systematically overestimates temperatures by about +8.7 °C across all grid cells, with no negative residuals. Both datasets are in °C and perfectly aligned spatially.
 
 ```{r Spatial Residual Map and Histogram}
@@ -1221,27 +1224,28 @@ summary(lm_rk_ref_temp)$r.squared
 c(median_bias = median_bias, R2 = summary(lm_rk_ref_temp)$r.squared)
 ```
 
+Short interpretation of the linear regression model results:
 The analysis shows that the RK model reproduces the general spatial temperature pattern well (R² = 0.78) but consistently predicts higher absolute temperatures than the reference. With a median bias of about +8.7 °C (in this case the same as mean_bias) and a regression slope of 2.7, the results indicate that the RK model is overall too warm and exhibits a narrower temperature range, underrepresenting the spatial variability present in the reference data.
 
-```{r}
-# Ensure CRS match between rasters and vector
+```{r Mean Temperature and Correlation by Landuse Class}
+
+# Align raster CRS to land use polygons
 mod_h   <- project(mod_h, landuse)
 ref30_h <- project(ref30_h, landuse)
 
-# Extract mean raster values for each polygon
+# Extract mean temperature per land use polygon
 mod_vals <- terra::extract(mod_h, landuse, fun = mean, na.rm = TRUE)
 ref_vals <- terra::extract(ref30_h, landuse, fun = mean, na.rm = TRUE)
 
-# Add extracted values to landuse polygons
+# Add mean values to land use data
 landuse$rk_mean  <- mod_vals[, 2]
 landuse$ref_mean <- ref_vals[, 2]
 
-# Compute difference
+# Calculate model–reference difference
 landuse <- landuse %>%
   mutate(diff = rk_mean - ref_mean)
-```
 
-```{r}
+# Summarize by land use class
 landuse_summary <- landuse %>%
   st_drop_geometry() %>%
   group_by(class_2018) %>%
@@ -1253,10 +1257,11 @@ landuse_summary <- landuse %>%
   )
 
 print(landuse_summary)
-
 ```
 
-```{r}
+```{r Color Palette for CORINE Landcover}
+
+# Define color palette for land cover classes based on CORINE
 landcover_colors <- c(
   "Continuous Urban fabric (S.L. > 80%)" = "#a40000",
   "Discontinuous Dense Urban Fabric (S.L.: 50% - 80%)" = "#d73027",
@@ -1286,36 +1291,11 @@ landcover_colors <- c(
   "Wetlands" = "#80cdc1",
   "Water" = "#67a9cf"
 )
-
-# Apply to your plot
-p <- ggplot(landuse_summary, aes(x = ref_mean, y = rk_mean, color = class_2018)) +
-  geom_point(alpha = 0.7, size = 2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
-  scale_color_manual(values = landcover_colors, name = "Landcover Class") +
-  coord_equal() +
-  labs(
-    title = "RK vs Reference Mean Temperature by Landcover Class (09 July 2023)",
-    x = "Reference Mean Temperature (°C)",
-    y = "RK Mean Temperature (°C)"
-  ) +
-  theme_minimal(base_size = 13) +
-  theme(
-    legend.position = "bottom",
-    legend.box = "vertical",
-    legend.text = element_text(size = 8),
-    legend.key.size = unit(0.4, "cm"),
-    legend.title = element_text(face = "bold"),
-    panel.grid.minor = element_blank(),
-    plot.title = element_text(hjust = 0.5, face = "bold")
-  ) +
-  guides(color = guide_legend(ncol = 3))  # multi-column legend
-
-p
-
-
 ```
 
 ```{r}
+
+# Summarise model–reference correlation by land cover class
 cor_summary <- landuse %>%
   st_drop_geometry() %>%
   group_by(class_2018) %>%
@@ -1328,63 +1308,41 @@ cor_summary <- landuse %>%
   ) %>%
   arrange(desc(corr))
 
+# remove classes without valid correlations
 cor_summary <- cor_summary %>% filter(!is.na(corr))
 
-print(cor_summary)
-
-p_corr <- ggplot(cor_summary, aes(
-  x = reorder(class_2018, corr),
-  y = corr,
-  fill = class_2018
+# Plot correlation by land cover class
+p_landcover_corr <- ggplot(cor_summary, aes(
+  x = reorder(class_2018, corr), 
+  y = corr,                      
+  fill = class_2018               
 )) +
-  geom_col() +
-  coord_flip() +
-  scale_fill_manual(values = landcover_colors, name = "Landcover Class") +
+  geom_col(width = 0.6, color = "grey30") +                         
+  geom_text(aes(label = sprintf("%.2f", corr)),         
+            hjust = -0.1, size = 3, color = "black") +
+  scale_fill_manual(values = landcover_colors) +                
+  coord_flip() +                                                    
+  geom_hline(yintercept = 0, color = "grey50", linetype = "dashed") + 
   labs(
-    title = "Correlation Between RK and Reference Temperatures by Landcover Class",
-    subtitle = "Pearson’s r computed per landcover category (n varies per class)",
-    caption = "Data: RK vs Reference mean temperature (09 July 2023)",
-    x = "Landcover Class (class_2018)",
-    y = "Pearson Correlation (r)"
-  ) +
-  theme_minimal(base_size = 13) +
-  theme(
-    legend.position = "none",  # Hide legend (colors already explained elsewhere)
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    axis.text.y = element_text(size = 9),
-    panel.grid.minor = element_blank()
-  )
-
-p_corr
-
-```
-
-```{r}
-ggplot(cor_summary, aes(
-  x = reorder(class_2018, corr),
-  y = corr,
-  fill = class_2018
-)) +
-  geom_col(aes(alpha = abs(corr)), width = 0.7, color = "grey30") +
-  scale_fill_manual(values = landcover_colors) +
-  scale_alpha_continuous(range = c(0.6, 1)) +
-  coord_flip() +
-  labs(
-    title = "Correlation Between RK Model and Reference Temperatures by Landcover Class (09 July 2023 at 2 pm)",
-    subtitle = "Pearson’s r computed per landcover category (n varies per class)",
+    title = "Temperature Correlation by Land Cover Class (09 July 2023, 14:00)",
+    subtitle = "Pearson’s r between RK model and reference temperatures",
     caption = "Data: RK model output, Urban Climate Analysis Heidelberg (2023),\nUrban Atlas Land Cover/Land Use (2018), Europe, 6-yearly",
     x = NULL,
-    y = expression("Pearson Correlation (r)")
+    y = "Pearson Correlation (r)"
   ) +
-  theme_minimal(base_size = 13) +
+  theme_bw(base_size = 13) +
   theme(
-    legend.position = "none",
-    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14), 
+    plot.subtitle = element_text(hjust = 0.5, size = 10, margin = margin(b = 8)), 
+    legend.position = "none",                                          
     axis.text.y = element_text(size = 9),
     panel.grid.minor = element_blank(),
     panel.grid.major.y = element_blank()
-  ) +
-  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")
+  )
 
+# Display the plots
+p_landcover_corr
+
+# Save as PNG
+ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
 ```
-
