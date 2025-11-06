@@ -238,8 +238,12 @@ ts_to_posix <- function(ch) {
   if (inherits(ch, "POSIXt")) {
     return(ch)
   }
-  # Otherwise, assume numeric hours since epoch
-  as.POSIXct(ch * 3600, origin = "1970-01-01", tz = "Europe/Berlin")
+  # If numeric (hours since 1970)
+  if (is.numeric(ch)) {
+    return(as.POSIXct(ch * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+  }
+  # If character string, try to parse
+  as.POSIXct(ch, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin")
 }
 
 nice_dt     <- function(x) format(x, "%Y-%m-%d %H:00 %Z")                                   
@@ -524,6 +528,22 @@ for (i in seq_along(timestamps)) {
   grid_out <- grids_sp
   grids_sp$rk_pred <- rk.pred
   
+  # Convert SpatialPixelsDataFrame → SpatRaster for export
+  rk_raster <- terra::rast(grids_sp["rk_pred"])
+  
+  # Define output .tif path
+  rk_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map.tif"))
+  
+  # Write GeoTIFF
+  terra::writeRaster(
+    rk_raster,
+    filename = rk_file_tif,
+    overwrite = TRUE,
+    gdal = c("COMPRESS=LZW")  # optional compression
+  )
+  
+  cat("  → RK prediction saved as GeoTIFF:", rk_file_tif, "\n")
+  
   # Define output filename for the RK prediction map
   rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
   
@@ -636,15 +656,13 @@ if (exists("rk_metrics_all")) {
 Plots to analyse model performance metrices
 
 ```{r Analyse CV metrics}
-# Read CSV
-cv_metrics <- read.csv("../rk_results_07-09-2023/cross_validation_metrics.csv")
+cv_metrics <- read.csv("../rk_results_07-09-2023/cross_validation_metrics.csv",
+                       stringsAsFactors = FALSE)
 
 cv_metrics <- cv_metrics %>%
   mutate(
-    # Parse datetime_local (the correct column with hours)
-    datetime_calc = as.POSIXct(datetime_local, tz = "Europe/Berlin"),
-    
-    # Helper columns
+    # ✅ Explicitly parse with full datetime format
+    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
     date = as.Date(datetime_calc),
     hour = lubridate::hour(datetime_calc)
   )
@@ -714,14 +732,16 @@ p_cv
 
 ```{r Analyse RK metrics}
 
-# Read CSV with rk_metrics
-rk_metrics <- read.csv("../rk_results_07-09-2023/rk_metrics.csv")
+# Read CSV
+rk_metrics <- read.csv("../rk_results_07-09-2023/rk_metrics.csv",
+                       stringsAsFactors = FALSE)
 
+# Parse datetime correctly (same as CV metrics)
 rk_metrics <- rk_metrics %>%
   mutate(
-    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
     date = as.Date(datetime_calc),
-    hour = hour(datetime_calc)
+    hour = lubridate::hour(datetime_calc)
   )
 
 # Reshape to long format
@@ -733,6 +753,9 @@ rk_metrics_long <- rk_metrics %>%
 # Filter year 2023
 df_plot <- rk_metrics_long %>%
   filter(year(date) == 2023)
+
+# Make sure hour is numeric
+df_plot$hour <- as.numeric(df_plot$hour)
 
 # Plot: Daily Evaluation of the Regression-Kriging Model Performance Metrics
 p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
@@ -782,19 +805,21 @@ p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)
 p_rk
 
 # Save plot
-ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
+# ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse LM metrics}
 
-# Read CSV with lm_metrics
-lm_metrics <- read.csv("../rk_results_07-09-2023/lm_model_performance_summary.csv")
+# Read CSV
+lm_metrics <- read.csv("../rk_results_07-09-2023/lm_model_performance_summary.csv",
+                       stringsAsFactors = FALSE)
 
+# Parse datetime column correctly (same approach as CV & RK)
 lm_metrics <- lm_metrics %>%
   mutate(
-    datetime_calc = as.POSIXct(timestamp * 3600, origin = "1970-01-01", tz = "Europe/Berlin"),
+    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
     date = as.Date(datetime_calc),
-    hour = hour(datetime_calc)
+    hour = lubridate::hour(datetime_calc)
   )
 
 # Reshape to long format
@@ -806,6 +831,9 @@ lm_metrics_long <- lm_metrics %>%
 # Filter year 2023
 lm_df_plot <- lm_metrics_long %>%
   filter(year(date) == 2023)
+
+# Make sure hour is numeric
+lm_df_plot$hour <- as.numeric(lm_df_plot$hour)
 
 # Plot: Daily Evaluation of Multiple Linear Regression Model Performance
 p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
@@ -858,7 +886,7 @@ p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metr
 p_lm
 
 # Save plot
-ggsave("../plots/lm_metrics_by_day_01-01-2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+# ggsave("../plots/lm_metrics_by_day_01-01-2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
 
@@ -898,17 +926,387 @@ grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
 grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
 ```
 
+------------------------------------------------------------------------
+
+Compare the Stadtklima-Analyse with my RK prediction surface
+
 ```{r}
-# Convert to SpatialPointsDataFrame
-grids_sp <- as(grid_sf, "Spatial")
+# Read data
+mod  <- rast("../rk_results_07-09-2023/rk_predictions/2023-07-09_1400_rk_prediction_map.tif")
+ref5 <- rast("../data/reference/2_22_074_ist_t14_rev01.tif")
+river <- st_read("../data/waterways/waterways_HD.gpkg")                  # Neckar river polyline(s)
+landuse <- st_read("../data/DE522L1_HEIDELBERG_UA2018_v013/Data/DE522L1_HEIDELBERG_UA2018_v013.gpkg")
 
-# Now to SpatialPixelsDataFrame
-gridded(grids_sp) <- TRUE
+# Sanity check: model must have a valid CRS
+if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first, e.g. crs(mod) <- 'EPSG:xxxx'.")
 
-# Convert to SpatialGridDataFrame
-grids_sp <- as(grids_sp, "SpatialGridDataFrame")
+# Get the model CRS as a proj string (works for both terra + sf)
+crs_mod <- crs(mod, proj = TRUE)
+crs(ref5) <- "EPSG:32632"
 
-str(grids_sp)
+# Project the 5 m reference to the model's CRS *and grid*
+ref30 <- project(ref5, mod, method = "bilinear")
+
+# Reproject vectors to the model CRS
+crs_mod <- crs(mod, proj = TRUE)
+hd_bounds <- st_transform(hd_bounds, crs = crs_mod)
+river     <- st_transform(river,     crs = crs_mod)
+landuse   <- st_transform(landuse,   crs = crs_mod)
+
+# Clip/mask AFTER projection
+mod    <- mask(crop(mod,    vect(hd_bounds)), vect(hd_bounds))
+ref30  <- mask(crop(ref30,  vect(hd_bounds)), vect(hd_bounds))
+river <- st_intersection(river, hd_bounds)
+landuse <- st_intersection(landuse, hd_bounds)
+
+# Quick checks
+stopifnot(terra::same.crs(ref30, mod))
+print(st_crs(hd_bounds)$input)
+stopifnot(isTRUE(all.equal(res(mod),  res(ref30))))
+stopifnot(isTRUE(all.equal(ext(mod),  ext(ref30))))
 ```
 
-------------------------------------------------------------------------
+
+```{r}
+# If your objects are single-hour already, keep these as-is:
+mod_h   <- mod          # or: mod_h <- mod[[idx_mod_14]]
+ref30_h <- ref30        # or: ref30_h <- ref30[[idx_mod_14]]
+
+# 1) Ensure identical NA mask
+both_mask <- !is.na(values(mod_h)) & !is.na(values(ref30_h))
+mod_h[!both_mask]   <- NA
+ref30_h[!both_mask] <- NA
+
+# 2) Extract paired values
+df <- as.data.frame(cbind(
+  mod = values(mod_h),
+  ref = values(ref30_h)
+)) |> drop_na()
+
+# 3) Metrics
+pearson_r <- cor(df$rk_pred, df$`2_22_074_ist_t14_rev01`, method = "pearson")
+spearman  <- cor(df$rk_pred, df$`2_22_074_ist_t14_rev01`, method = "spearman")
+bias <- mean(df$rk_pred - df$`2_22_074_ist_t14_rev01`, na.rm = TRUE)
+mae  <- mean(abs(df$rk_pred - df$`2_22_074_ist_t14_rev01`), na.rm = TRUE)
+rmse <- sqrt(mean((df$rk_pred - df$`2_22_074_ist_t14_rev01`)^2, na.rm = TRUE))
+
+print(c(pearson_r=pearson_r, spearman=spearman, bias=bias, MAE=mae, RMSE=rmse))
+
+# 4) Scatter (sample for speed if needed)
+set.seed(1)
+df_plot <- if (nrow(df) > 1e6) df[sample.int(nrow(df), 1e6), ] else df
+
+ggplot(df_plot, aes(ref30_h, mod_h)) +
+  geom_hex(bins = 40) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    x = "Reference (5 m → 30 m mean)",
+    y = "Model (30 m)",
+    title = sprintf("Agreement at 14:00 — r = %.2f, RMSE = %.2f", pearson_r, rmse)
+  ) +
+  coord_equal()
+
+
+```
+
+```{r}
+# ------------------------------------------------
+# Convert rasters to data frames for ggplot
+# ------------------------------------------------
+mod_df  <- as.data.frame(mod_h,  xy = TRUE, na.rm = TRUE)
+ref_df  <- as.data.frame(ref30_h, xy = TRUE, na.rm = TRUE)
+
+names(mod_df)[3] <- "value"
+names(ref_df)[3] <- "value"
+
+# Compute shared breaks and color scale limits
+mm_mod <- terra::minmax(mod_h)
+mm_ref <- terra::minmax(ref30_h)
+rng <- range(c(mm_mod, mm_ref), na.rm = TRUE)
+
+# ------------------------------------------------
+# Convert shapefiles to sf objects if not already
+# ------------------------------------------------
+river_sf     <- st_as_sf(river)
+hd_bounds_sf <- st_as_sf(hd_bounds)
+
+p1 <- ggplot() +
+  geom_raster(data = mod_df, aes(x = x, y = y, fill = value)) +
+  geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
+  geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
+  scale_fill_viridis_c(name = "°C", limits = rng) +
+  coord_sf() +   # <<-- use coord_sf instead of coord_equal
+  labs(title = "RK model") +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.title = element_blank(),
+    axis.text  = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+p2 <- ggplot() +
+  geom_raster(data = ref_df, aes(x = x, y = y, fill = value)) +
+  geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
+  geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
+  scale_fill_viridis_c(name = "°C", limits = rng) +
+  coord_sf() +   # <<-- same fix here
+  labs(title = "Reference model") +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.title = element_blank(),
+    axis.text  = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+
+# ------------------------------------------------
+# Combine side-by-side with shared legend
+# ------------------------------------------------
+combined_plot <- (p1 + p2 + 
+                    plot_layout(guides = "collect") & 
+                    theme(legend.position = "right")) +
+  plot_annotation(
+    title = "Comparison of RK Model and Reference Temperature Maps — 14:00",
+    theme = theme(
+      plot.title = element_text(
+        size = 16, 
+        face = "bold", 
+        hjust = 0.5,
+        margin = margin(b = 10)
+      )
+    )
+  )
+# Display
+combined_plot
+
+# Optional: Save high-res PNG
+# ggsave("rk_vs_ref_14-00.png", combined_plot, width = 10, height = 5, dpi = 300)
+
+```
+
+
+```{r}
+# 1) How many residuals are negative/positive?
+resid <- df$rk_pred - df$`2_22_074_ist_t14_rev01`
+summary(resid)
+mean(resid); median(resid)
+mean(resid < 0); mean(resid > 0)  # share of negatives/positives
+
+# 2) Any unit mismatch or scaling oddities?
+summary(df$rk_pred); summary(df$`2_22_074_ist_t14_rev01`)
+# If values are ~280–320 it's Kelvin; ~10–45 is °C.
+# A 273.15 shift would show up immediately.
+
+# 3) Are we definitely evaluating at the same spatial support?
+# (5 m aggregated to model’s 30 m) – you already did this, just re-assert:
+stopifnot(terra::same.crs(ref30, mod))
+stopifnot(isTRUE(all.equal(terra::res(ref30), terra::res(mod))))
+stopifnot(isTRUE(all.equal(terra::ext(ref30), terra::ext(mod))))
+
+```
+
+```{r}
+# Residual histogram
+ggplot(data.frame(resid), aes(resid)) +
+  geom_histogram(bins = 60) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(x = "Model − Reference (°C)", y = "Count",
+       title = "Residuals distribution at 14:00")
+
+# Residual map (diverging, centered at 0)
+resid_r <- mod_h - ref30_h
+rmax <- max(abs(terra::global(resid_r, "min", na.rm=TRUE)$min),
+            abs(terra::global(resid_r, "max", na.rm=TRUE)$max))
+plot(resid_r, zlim = c(-rmax, rmax), col = hcl.colors(21, "Blue-Red 3"),
+     main = "Residuals (Model − Reference) at 14:00 [°C]")
+
+resid_r <- mod_h - ref30_h
+terra::global(resid_r, c("min","mean","max"), na.rm=TRUE)
+sum(values(resid_r) < 0, na.rm = TRUE)  # should be 0 or near 0 if all positive
+
+
+```
+
+```{r}
+# Robust central tendency
+median_bias <- median(resid, na.rm = TRUE)
+mdae        <- median(abs(resid), na.rm = TRUE)
+
+# R² and regression line (does the model need an offset/slope correction?)
+fit <- lm(df$`2_22_074_ist_t14_rev01` ~ df$rk_pred)
+summary(fit)$coefficients   # intercept/slope
+summary(fit)$r.squared
+
+# Normalized errors (help compare across days)
+rng <- diff(range(df$`2_22_074_ist_t14_rev01`, na.rm = TRUE))
+nrmse <- rmse / rng
+
+```
+
+```{r}
+# Ensure CRS match between rasters and vector
+mod_h   <- project(mod_h, landuse)
+ref30_h <- project(ref30_h, landuse)
+
+# Extract mean raster values for each polygon
+mod_vals <- terra::extract(mod_h, landuse, fun = mean, na.rm = TRUE)
+ref_vals <- terra::extract(ref30_h, landuse, fun = mean, na.rm = TRUE)
+
+# Add extracted values to landuse polygons
+landuse$rk_mean  <- mod_vals[, 2]
+landuse$ref_mean <- ref_vals[, 2]
+
+# Compute difference
+landuse <- landuse %>%
+  mutate(diff = rk_mean - ref_mean)
+```
+
+```{r}
+landuse_summary <- landuse %>%
+  st_drop_geometry() %>%
+  group_by(class_2018) %>%
+  summarise(
+    rk_mean   = mean(rk_mean, na.rm = TRUE),
+    ref_mean  = mean(ref_mean, na.rm = TRUE),
+    diff_mean = mean(diff, na.rm = TRUE),
+    corr      = cor(rk_mean, ref_mean, use = "complete.obs")
+  )
+
+print(landuse_summary)
+
+```
+
+```{r}
+landcover_colors <- c(
+  "Continuous Urban fabric (S.L. > 80%)" = "#a40000",
+  "Discontinuous Dense Urban Fabric (S.L.: 50% - 80%)" = "#d73027",
+  "Discontinuous Medium Density Urban Fabric (S.L.: 30% - 50%)" = "#f46d43",
+  "Discontinuous Low Density Urban Fabric (S.L.: 10% - 30%)" = "#fdae61",
+  "Discontinuous very Low Density Urban Fabric (S.L.: < 10%)" = "#fee090",
+  "Isolated Structures" = "#ffffbf",
+  "Industrial, commercial, public, military and private units" = "#bdbdbd",
+  "Fast transit roads and associated land" = "#969696",
+  "Other roads and associated land" = "#636363",
+  "Railways and associated land" = "#252525",
+  "Port areas" = "#878787",
+  "Airports" = "#cccccc",
+  "Mineral extraction and dump sites" = "#ffcc99",
+  "Construction sites" = "#ffeda0",
+  "Land without current use" = "#f0f0f0",
+  "Green urban areas" = "#78c679",
+  "Sports and leisure facilities" = "#41ab5d",
+  "Arable land (annual crops)" = "#e6ab02",
+  "Permanent crops" = "#fee391",
+  "Pastures" = "#a1d99b",
+  "Complex and mixed cultivation patterns" = "#c2e699",
+  "Orchards" = "#addd8e",
+  "Forests" = "#006837",
+  "Herbaceous vegetation associations" = "#31a354",
+  "Open spaces with little or no vegetation" = "#d9f0a3",
+  "Wetlands" = "#80cdc1",
+  "Water" = "#67a9cf"
+)
+
+# Apply to your plot
+p <- ggplot(landuse_summary, aes(x = ref_mean, y = rk_mean, color = class_2018)) +
+  geom_point(alpha = 0.7, size = 2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black") +
+  scale_color_manual(values = landcover_colors, name = "Landcover Class") +
+  coord_equal() +
+  labs(
+    title = "RK vs Reference Mean Temperature by Landcover Class (09 July 2023)",
+    x = "Reference Mean Temperature (°C)",
+    y = "RK Mean Temperature (°C)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.text = element_text(size = 8),
+    legend.key.size = unit(0.4, "cm"),
+    legend.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  ) +
+  guides(color = guide_legend(ncol = 3))  # multi-column legend
+
+p
+
+
+```
+
+```{r}
+cor_summary <- landuse %>%
+  st_drop_geometry() %>%
+  group_by(class_2018) %>%
+  summarise(
+    n = n(),
+    corr = cor(rk_mean, ref_mean, use = "complete.obs"),
+    rk_mean = mean(rk_mean, na.rm = TRUE),
+    ref_mean = mean(ref_mean, na.rm = TRUE),
+    diff_mean = mean(rk_mean - ref_mean, na.rm = TRUE)
+  ) %>%
+  arrange(desc(corr))
+
+cor_summary <- cor_summary %>% filter(!is.na(corr))
+
+print(cor_summary)
+
+p_corr <- ggplot(cor_summary, aes(
+  x = reorder(class_2018, corr),
+  y = corr,
+  fill = class_2018
+)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = landcover_colors, name = "Landcover Class") +
+  labs(
+    title = "Correlation Between RK and Reference Temperatures by Landcover Class",
+    subtitle = "Pearson’s r computed per landcover category (n varies per class)",
+    caption = "Data: RK vs Reference mean temperature (09 July 2023)",
+    x = "Landcover Class (class_2018)",
+    y = "Pearson Correlation (r)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",  # Hide legend (colors already explained elsewhere)
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(size = 9),
+    panel.grid.minor = element_blank()
+  )
+
+p_corr
+
+```
+
+```{r}
+ggplot(cor_summary, aes(
+  x = reorder(class_2018, corr),
+  y = corr,
+  fill = class_2018
+)) +
+  geom_col(aes(alpha = abs(corr)), width = 0.7, color = "grey30") +
+  scale_fill_manual(values = landcover_colors) +
+  scale_alpha_continuous(range = c(0.6, 1)) +
+  coord_flip() +
+  labs(
+    title = "Correlation Between RK Model and Reference Temperatures by Landcover Class (09 July 2023 at 2 pm)",
+    subtitle = "Pearson’s r computed per landcover category (n varies per class)",
+    caption = "Data: RK model output, Urban Climate Analysis Heidelberg (2023),\nUrban Atlas Land Cover/Land Use (2018), Europe, 6-yearly",
+    x = NULL,
+    y = expression("Pearson Correlation (r)")
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.y = element_text(size = 9),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  ) +
+  geom_hline(yintercept = 0, color = "grey40", linetype = "dashed")
+
+```
+
