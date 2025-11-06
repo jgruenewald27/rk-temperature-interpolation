@@ -930,84 +930,96 @@ grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
 
 Compare the Stadtklima-Analyse with my RK prediction surface
 
-```{r}
-# Read data
+```{r Compare the Stadtklima-Analyse with my RK prediction surface}
+
+# Load rasters and vector data
 mod  <- rast("../rk_results_07-09-2023/rk_predictions/2023-07-09_1400_rk_prediction_map.tif")
 ref5 <- rast("../data/reference/2_22_074_ist_t14_rev01.tif")
-river <- st_read("../data/waterways/waterways_HD.gpkg")                  # Neckar river polyline(s)
+river <- st_read("../data/waterways/waterways_HD.gpkg")                 
 landuse <- st_read("../data/DE522L1_HEIDELBERG_UA2018_v013/Data/DE522L1_HEIDELBERG_UA2018_v013.gpkg")
 
-# Sanity check: model must have a valid CRS
-if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first, e.g. crs(mod) <- 'EPSG:xxxx'.")
+# Check if model has CRS
+if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first.")
 
-# Get the model CRS as a proj string (works for both terra + sf)
+# Define CRS and project reference raster to model grid
 crs_mod <- crs(mod, proj = TRUE)
 crs(ref5) <- "EPSG:32632"
-
-# Project the 5 m reference to the model's CRS *and grid*
 ref30 <- project(ref5, mod, method = "bilinear")
 
-# Reproject vectors to the model CRS
+# Reproject vector layers to project CRS
 crs_mod <- crs(mod, proj = TRUE)
 hd_bounds <- st_transform(hd_bounds, crs = crs_mod)
 river     <- st_transform(river,     crs = crs_mod)
 landuse   <- st_transform(landuse,   crs = crs_mod)
 
-# Clip/mask AFTER projection
+# Crop and mask rasters by AOI
 mod    <- mask(crop(mod,    vect(hd_bounds)), vect(hd_bounds))
 ref30  <- mask(crop(ref30,  vect(hd_bounds)), vect(hd_bounds))
+
+# Clip vector layers to AOI
 river <- st_intersection(river, hd_bounds)
 landuse <- st_intersection(landuse, hd_bounds)
 
-# Quick checks
+# Verify alignment between datasets
 stopifnot(terra::same.crs(ref30, mod))
 print(st_crs(hd_bounds)$input)
 stopifnot(isTRUE(all.equal(res(mod),  res(ref30))))
 stopifnot(isTRUE(all.equal(ext(mod),  ext(ref30))))
 ```
 
+```{r Model–Reference Temperature Comparison and Metrics}
 
-```{r}
-# If your objects are single-hour already, keep these as-is:
-mod_h   <- mod          # or: mod_h <- mod[[idx_mod_14]]
-ref30_h <- ref30        # or: ref30_h <- ref30[[idx_mod_14]]
+# Select single-hour rasters
+mod_h   <- mod    
+ref30_h <- ref30       
 
-# 1) Ensure identical NA mask
+# Apply common NA mask
 both_mask <- !is.na(values(mod_h)) & !is.na(values(ref30_h))
 mod_h[!both_mask]   <- NA
 ref30_h[!both_mask] <- NA
 
-# 2) Extract paired values
-df <- as.data.frame(cbind(
-  mod = values(mod_h),
-  ref = values(ref30_h)
-)) |> drop_na()
+# Extract cell values from both rasters
+vr <- values(c(mod_h, ref30_h))           
+colnames(vr) <- c("rk_temp", "ref_temp")  # rename columns
+comparison_df <- as.data.frame(vr) |> drop_na() 
 
-# 3) Metrics
-pearson_r <- cor(df$rk_pred, df$`2_22_074_ist_t14_rev01`, method = "pearson")
-spearman  <- cor(df$rk_pred, df$`2_22_074_ist_t14_rev01`, method = "spearman")
-bias <- mean(df$rk_pred - df$`2_22_074_ist_t14_rev01`, na.rm = TRUE)
-mae  <- mean(abs(df$rk_pred - df$`2_22_074_ist_t14_rev01`), na.rm = TRUE)
-rmse <- sqrt(mean((df$rk_pred - df$`2_22_074_ist_t14_rev01`)^2, na.rm = TRUE))
+# Calculate comparison metrics
+pearson_r <- cor(comparison_df$rk_temp, comparison_df$ref_temp, method = "pearson")
+spearman_r<- cor(comparison_df$rk_temp, comparison_df$ref_temp, method = "spearman")
+bias_C    <- mean(comparison_df$rk_temp - comparison_df$ref_temp)
+mae_C     <- mean(abs(comparison_df$rk_temp - comparison_df$ref_temp))
+rmse_C    <- sqrt(mean((comparison_df$rk_temp - comparison_df$ref_temp)^2))
 
-print(c(pearson_r=pearson_r, spearman=spearman, bias=bias, MAE=mae, RMSE=rmse))
+# Combine metrics for output
+metrics <- c(
+  pearson_r = pearson_r,
+  spearman_r = spearman_r,
+  bias_C = bias_C,
+  MAE_C = mae_C,
+  RMSE_C = rmse_C
+)
+print(metrics)
 
-# 4) Scatter (sample for speed if needed)
+# Sample data if very large (for faster plotting)
 set.seed(1)
-df_plot <- if (nrow(df) > 1e6) df[sample.int(nrow(df), 1e6), ] else df
+comparison_plot_df <- if (nrow(comparison_df) > 1e6) {
+  comparison_df[sample.int(nrow(comparison_df), 1e6), ]
+} else comparison_df
 
-ggplot(df_plot, aes(ref30_h, mod_h)) +
+# Plot model vs. reference scatter with 1:1 line
+ggplot(comparison_plot_df, aes(x = ref_temp, y = rk_temp)) +
   geom_hex(bins = 40) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  coord_equal() +
   labs(
-    x = "Reference (5 m → 30 m mean)",
-    y = "Model (30 m)",
-    title = sprintf("Agreement at 14:00 — r = %.2f, RMSE = %.2f", pearson_r, rmse)
-  ) +
-  coord_equal()
-
-
+    x = "Reference (5 m → 30 m mean) [°C]",
+    y = "RK model (30 m) [°C]",
+    title = sprintf("Agreement at 14:00 — r = %.2f, RMSE = %.2f °C", pearson_r, rmse_C)
+  )
 ```
+
+Short interpretation of the plot:
+The RK model reproduces the relative spatial pattern of heat well (r ≈ 0.88) but is systematically too warm by about 8–9 °C across the city at 14:00.
 
 ```{r}
 # ------------------------------------------------
