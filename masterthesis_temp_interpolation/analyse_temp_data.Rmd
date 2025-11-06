@@ -409,6 +409,39 @@ ggsave(
 )
 ```
 
+--------------------------------------------------------------------------------
+
+Filter for hottest timestamp for the year of 2023 at 09-07-2023 at 14 pm
+
+```{r}
+# 09-07-2023 13pm
+sel_469139 <- temp_clean_station_hm_cov %>%
+  filter(chour == 469139)
+
+# quick sanity checks
+nrow(sel_469139)                  # how many rows (stations) at that hour
+length(unique(sel_469139$entity_id))  # distinct stations
+unique(sel_469139$hour)           # the POSIXct hour (should be length 1)
+
+# 09-07-2023 14pm
+sel_469140 <- temp_clean_station_hm_cov %>%
+  filter(chour == 469140)
+
+# quick sanity checks
+nrow(sel_469140)                  # how many rows (stations) at that hour
+length(unique(sel_469140$entity_id))  # distinct stations
+unique(sel_469140$hour)           # the POSIXct hour (should be length 1)
+
+# 09-07-2023 14pm
+sel_469141 <- temp_clean_station_hm_cov %>%
+  filter(chour == 469141)
+
+# quick sanity checks
+nrow(sel_469141)                  # how many rows (stations) at that hour
+length(unique(sel_469141$entity_id))  # distinct stations
+unique(sel_469141$hour)           # the POSIXct hour (should be length 1)
+```
+
 
 
 --------------------------------------------------------------------------------
@@ -637,39 +670,11 @@ combined_stats
 
 --------------------------------------------------------------------------------
 
-Calculate mean temperature for each measurement station for the month of July
-
-```{r}
-# Calculate the mean temperature for each station in July
-temp_mm <- temp %>%
-  filter(format(dateobserved, "%m") == "07") %>%
-  group_by(stationname) %>%
-  summarise(monthly_mean_temperature = mean(temperature, na.rm = TRUE), .groups = "drop")
-```
-
-```{r}
-ggplot(temp_mm, aes(x = reorder(stationname, monthly_mean_temperature), 
-                    y = monthly_mean_temperature)) +
-  geom_col(fill = "steelblue") +
-  coord_flip() +  # Flips axes for better readability
-  labs(
-    title = "Mean Temperature in July by Station",
-    x = "Station",
-    y = "Mean Temperature (°C)"
-  ) +
-  theme_minimal()
-```
-
---------------------------------------------------------------------------------
-
 Calculate Spearman
 Explanation why I chose Spearman:
 - Pearson’s correlation assumes both normality and linearity in the relationship between X and Y. 
 - Spearman’s correlation has less stringent assumptions, assuming only that the relationship is monotonic. This means that the relationship has to be consistently increasing or decreasing, but that it does not have to do so in a linear manner (see left). 
 - Spearman’s correlation also performs better than Pearson’s correlation in instances where there are outliers or very few data point -> this is the case for my data.
-
-
-
 
 ```{r}
 cor.test(temp_mm$elevation, temp_mm$monthly_mean_temperature, method = "spearman")
