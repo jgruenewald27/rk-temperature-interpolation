@@ -33,6 +33,7 @@ library(tidyverse)
 
 # Data Visualization
 library(ggplot2)
+library(ggspatial)
 library(scales)
 library(gridExtra)
 library(corrplot)
@@ -1012,7 +1013,7 @@ ggplot(comparison_plot_df, aes(x = ref_temp, y = rk_temp)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
   coord_equal() +
   labs(
-    x = "Reference (5 m → 30 m mean) [°C]",
+    x = "Reference (5 m downsampled to 30 m mean) [°C]",
     y = "RK model (30 m) [°C]",
     title = sprintf("Agreement at 14:00 — r = %.2f, RMSE = %.2f °C", pearson_r, rmse_C)
   )
@@ -1021,124 +1022,189 @@ ggplot(comparison_plot_df, aes(x = ref_temp, y = rk_temp)) +
 Short interpretation of the plot:
 The RK model reproduces the relative spatial pattern of heat well (r ≈ 0.88) but is systematically too warm by about 8–9 °C across the city at 14:00.
 
-```{r}
-# ------------------------------------------------
-# Convert rasters to data frames for ggplot
-# ------------------------------------------------
+```{r RK and Reference Temperature Map Visualization}
+
+# Convert rasters to data frames for plotting  
 mod_df  <- as.data.frame(mod_h,  xy = TRUE, na.rm = TRUE)
 ref_df  <- as.data.frame(ref30_h, xy = TRUE, na.rm = TRUE)
-
 names(mod_df)[3] <- "value"
 names(ref_df)[3] <- "value"
 
-# Compute shared breaks and color scale limits
+# Compute shared color scale range  
 mm_mod <- terra::minmax(mod_h)
 mm_ref <- terra::minmax(ref30_h)
 rng <- range(c(mm_mod, mm_ref), na.rm = TRUE)
 
-# ------------------------------------------------
-# Convert shapefiles to sf objects if not already
-# ------------------------------------------------
+# Convert vector layers to sf  
 river_sf     <- st_as_sf(river)
 hd_bounds_sf <- st_as_sf(hd_bounds)
 
-p1 <- ggplot() +
+# Plot RK model map  
+p_rk_map <- ggplot() +
   geom_raster(data = mod_df, aes(x = x, y = y, fill = value)) +
   geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
-  scale_fill_viridis_c(name = "°C", limits = rng) +
-  coord_sf() +   # <<-- use coord_sf instead of coord_equal
-  labs(title = "RK model") +
+  scale_fill_viridis_c(name = "Temperature [°C]", limits = rng) +
+  coord_sf() + 
+  annotation_scale(location = "br", width_hint = 0.3) +    
+  annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
+  labs(title = "RK model",
+      subtitle = sprintf("Temperature value range: %.1f – %.1f °C", 
+                         min(mod_df$value, na.rm = TRUE), max(mod_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
     axis.title = element_blank(),
     axis.text  = element_blank(),
     panel.grid = element_blank(),
-    plot.title = element_text(hjust = 0.5, face = "bold")
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 9, face = "plain", 
+                                 margin = margin(t = 1, b = 5))
   )
 
-p2 <- ggplot() +
+# Plot reference map  
+p_ref_map <- ggplot() +
   geom_raster(data = ref_df, aes(x = x, y = y, fill = value)) +
   geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
-  scale_fill_viridis_c(name = "°C", limits = rng) +
-  coord_sf() +   # <<-- same fix here
-  labs(title = "Reference model") +
+  scale_fill_viridis_c(name = "Temperature [°C]", limits = rng) +
+  coord_sf() +
+  annotation_scale(location = "br", width_hint = 0.3) +
+  annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
+  labs(title = "Reference model",
+       subtitle = sprintf("Temperature value range: %.1f – %.1f °C", 
+                          min(ref_df$value, na.rm = TRUE), max(ref_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
     axis.title = element_blank(),
     axis.text  = element_blank(),
     panel.grid = element_blank(),
-    plot.title = element_text(hjust = 0.5, face = "bold")
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 9, face = "plain", 
+                                 margin = margin(t = 1, b = 5))
   )
 
-
-# ------------------------------------------------
-# Combine side-by-side with shared legend
-# ------------------------------------------------
-combined_plot <- (p1 + p2 + 
+# Combine both plots with shared legend  
+p_rk_ref <- (p_rk_map + p_ref_map + 
                     plot_layout(guides = "collect") & 
                     theme(legend.position = "right")) +
   plot_annotation(
-    title = "Comparison of RK Model and Reference Temperature Maps — 14:00",
-    theme = theme(
-      plot.title = element_text(
-        size = 16, 
-        face = "bold", 
-        hjust = 0.5,
-        margin = margin(b = 10)
-      )
-    )
+    title = "Comparison of RK and Reference Temperature Maps — Heidelberg, 09-07-2023 14:00",
+    theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5,
+        margin = margin(b = 10)))
   )
-# Display
-combined_plot
 
-# Optional: Save high-res PNG
-# ggsave("rk_vs_ref_14-00.png", combined_plot, width = 10, height = 5, dpi = 300)
+# Display combined plot
+p_rk_ref
 
+# Save as PNG
+# ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
 ```
 
+The following chunk is a quality-control checkpoint. It doesn’t change the analysis output, but it ensures that what I compare is valid (same units, same grid, no hidden bias).
+Keep it as a safety check but might omit it from the final report.
 
-```{r}
-# 1) How many residuals are negative/positive?
-resid <- df$rk_pred - df$`2_22_074_ist_t14_rev01`
+```{r Residual diagnostics and consistency checks}
+
+# Residual summary (model-reference)
+resid <- comparison_df$rk_temp - comparison_df$ref_temp
 summary(resid)
-mean(resid); median(resid)
-mean(resid < 0); mean(resid > 0)  # share of negatives/positives
+mean(resid)        # mean bias
+median(resid)      # median bias
+mean(resid < 0)    # share of negative residuals
+mean(resid > 0)    # share of positive residuals
 
-# 2) Any unit mismatch or scaling oddities?
-summary(df$rk_pred); summary(df$`2_22_074_ist_t14_rev01`)
-# If values are ~280–320 it's Kelvin; ~10–45 is °C.
-# A 273.15 shift would show up immediately.
+# Unit consistency check
+summary(comparison_df$rk_temp)
+summary(comparison_df$ref_temp)
+# Values ~280–320 → Kelvin; ~10–45 → Celsius
+# A ~273.15 offset would indicate mixed units
 
-# 3) Are we definitely evaluating at the same spatial support?
-# (5 m aggregated to model’s 30 m) – you already did this, just re-assert:
+# Spatial alignment check (CRS, resolution, extent)
 stopifnot(terra::same.crs(ref30, mod))
-stopifnot(isTRUE(all.equal(terra::res(ref30), terra::res(mod))))
-stopifnot(isTRUE(all.equal(terra::ext(ref30), terra::ext(mod))))
-
+stopifnot(isTRUE(all.equal(terra::res(ref30),  terra::res(mod))))
+stopifnot(isTRUE(all.equal(terra::ext(ref30),  terra::ext(mod))))
 ```
 
-```{r}
+The RK model systematically overestimates temperatures by about +8.7 °C across all grid cells, with no negative residuals. Both datasets are in °C and perfectly aligned spatially.
+
+```{r Spatial Residual Map and Histogram}
+
 # Residual histogram
-ggplot(data.frame(resid), aes(resid)) +
-  geom_histogram(bins = 60) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  labs(x = "Model − Reference (°C)", y = "Count",
-       title = "Residuals distribution at 14:00")
+p_resid_hist <- ggplot(data.frame(resid), aes(x = resid)) +
+  geom_histogram(bins = 60, fill = "steelblue", color = "white", alpha = 0.8) +
+  geom_vline(xintercept = 0, color = "black", linetype = "dashed", linewidth = 0.6) +
+  labs(
+    title = "Residual Distribution (RK Model – Reference, 09-07-2023 14:00)",
+    subtitle = sprintf("Mean bias = %.2f °C", mean(resid)),
+    x = "Residual (Model − Reference) [°C]",
+    y = "Number of cells"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 10, margin = margin(b = 5)),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85"),
+    axis.title = element_text(face = "bold")
+  )
 
-# Residual map (diverging, centered at 0)
-resid_r <- mod_h - ref30_h
-rmax <- max(abs(terra::global(resid_r, "min", na.rm=TRUE)$min),
-            abs(terra::global(resid_r, "max", na.rm=TRUE)$max))
-plot(resid_r, zlim = c(-rmax, rmax), col = hcl.colors(21, "Blue-Red 3"),
-     main = "Residuals (Model − Reference) at 14:00 [°C]")
+# Recalculate spatial residuals (per grid cell) to retain geographic structure 
+resid_raster <- mod_h - ref30_h
 
-resid_r <- mod_h - ref30_h
-terra::global(resid_r, c("min","mean","max"), na.rm=TRUE)
-sum(values(resid_r) < 0, na.rm = TRUE)  # should be 0 or near 0 if all positive
+# Convert residual raster to data frame for ggplot visualization
+resid_map_df <- as.data.frame(resid_raster, xy = TRUE, na.rm = TRUE)
+names(resid_map_df)[3] <- "residual"
 
+# Define symmetric color scale limits around zero
+rmax <- ceiling(max(abs(terra::global(resid_raster, "min", na.rm = TRUE)$min),
+                    abs(terra::global(resid_raster, "max", na.rm = TRUE)$max)))
+# round to nearest multiple of 5 for clean legend breaks
+rmax <- ceiling(rmax / 5) * 5  
 
+# Plot spatial residual distribution
+p_resid_map <- ggplot() +
+  geom_raster(data = resid_map_df, aes(x = x, y = y, fill = residual)) +
+  geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
+  geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.5) +
+  scale_fill_gradient2(
+    name = "Residual (°C)",
+    low = "#2166ac", mid = "white", high = "#b2182b",
+    midpoint = 0,
+    limits = c(-rmax, rmax),
+    breaks = seq(-15, 15, 5),
+    labels = seq(-15, 15, 5)
+  ) +
+  coord_sf() +
+  annotation_scale(location = "br", width_hint = 0.3) +    
+  annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
+  labs(
+    title = "Spatial Distribution of Residuals (Model − Reference) on 09-07-2023 at 14:00 [°C]",
+    subtitle = "Blue: Model colder than reference | Red: Model warmer than reference"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 9, margin = margin(b = 8)),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 9),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  )
+
+# Display the plots
+p_resid_hist
+p_resid_map
+
+# Save as PNG
+ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
+
+ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
 ```
 
 ```{r}
