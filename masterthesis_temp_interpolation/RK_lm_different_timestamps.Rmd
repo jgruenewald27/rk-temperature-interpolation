@@ -552,166 +552,13 @@ if (exists("rk_metrics_all")) {
 }
 ```
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 Plots to analyse model performance metrices
 
-```{r Analyse CV metrics}
-cv_metrics <- read.csv("../rk_results_07-09-2023/cross_validation_metrics.csv",
-                       stringsAsFactors = FALSE)
-
-cv_metrics <- cv_metrics %>%
-  mutate(
-    # ✅ Explicitly parse with full datetime format
-    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = lubridate::hour(datetime_calc)
-  )
-
-# Reshape to long format
-cv_metrics_long <- cv_metrics %>%
-  pivot_longer(cols = c(cv_rmse, cv_mae),
-               names_to = "metric",
-               values_to = "value")
-
-# Filter nur 2023
-df_plot <- cv_metrics_long %>%
-  filter(year(date) == 2023)
-
-df_plot$hour <- as.numeric(df_plot$hour)
-
-# Plot: Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
-p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  # Lines, reference line, and points
-  geom_line(linewidth = 1.2) +
-  geom_hline(
-    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
-    color = "grey60"
-  ) +
-  geom_point(size = 1.8) +
-  # Facet by date
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  # Color and linetype scales
-  scale_color_manual(
-    values = c(
-      "cv_rmse" = "#6699CC",
-      "cv_mae"  = "#CC6677"
-    ),
-    labels = c(
-      "cv_rmse" = "Root Mean Square Error (RMSE)",
-      "cv_mae"  = "Mean Absolute Error (MAE)"
-    )
-  ) +
-  scale_linetype_manual(
-    name   = "",
-    values = c("Perfect Prediction (Error = 0)" = "dotted")
-  ) +
-  # Labels
-  labs(
-    title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
-    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
-    x        = "Hour of the Day",
-    y        = "Error Metric [°C]",
-    color    = "Metrics"
-  ) +
-  # X-axis breaks
-  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  # Theme
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position   = "top",
-    panel.grid.minor  = element_blank(),
-    strip.background  = element_rect(fill = "grey90", color = NA),
-    strip.text        = element_text(face = "bold")
-  )
-
-p_cv
-
-# Save the plot
-#ggsave("../plots/cv_metrics_by_day_01-01-2023.png", plot = p_cv, width = 12, height = 8, dpi = 300)
-```
-
-```{r Analyse RK metrics}
-
-# Read CSV
-rk_metrics <- read.csv("../rk_results_07-09-2023/rk_metrics.csv",
-                       stringsAsFactors = FALSE)
-
-# Parse datetime correctly (same as CV metrics)
-rk_metrics <- rk_metrics %>%
-  mutate(
-    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = lubridate::hour(datetime_calc)
-  )
-
-# Reshape to long format
-rk_metrics_long <- rk_metrics %>%
-  pivot_longer(cols = c(rk_rmse, rk_mae),
-               names_to = "metric",
-               values_to = "value")
-
-# Filter year 2023
-df_plot <- rk_metrics_long %>%
-  filter(year(date) == 2023)
-
-# Make sure hour is numeric
-df_plot$hour <- as.numeric(df_plot$hour)
-
-# Plot: Daily Evaluation of the Regression-Kriging Model Performance Metrics
-p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  # Lines, reference line, and points
-  geom_line(linewidth = 1.2) +
-  geom_hline(
-    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),
-    color = "grey60"
-  ) +
-  geom_point(size = 1.8) +
-  # Facet by date
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  # Color and linetype scales
-  scale_color_manual(
-    values = c(
-      "rk_rmse" = "#6699CC",
-      "rk_mae"  = "#CC6677"
-    ),
-    labels = c(
-      "rk_rmse" = "Root Mean Square Error (RMSE)",
-      "rk_mae"  = "Mean Absolute Error (MAE)"
-    )
-  ) +
-  scale_linetype_manual(
-    name   = "",
-    values = c("Perfect Prediction (Error = 0)" = "dotted")
-  ) +
-  # Labels
-  labs(
-    title    = "Daily Evaluation of the Regression-Kriging Model Performance Metrics",
-    subtitle = "Hourly RMSE and MAE values from models predicting hourly mean temperature",
-    x        = "Hour of the Day",
-    y        = "Error Metric [°C]",
-    color    = "Metrics"
-  ) +
-  # X-axis breaks
-  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  # Theme
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position   = "top",
-    panel.grid.minor  = element_blank(),
-    strip.background  = element_rect(fill = "grey90", color = NA),
-    strip.text        = element_text(face = "bold")
-  )
-
-p_rk
-
-# Save plot
-# ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
-```
-
 ```{r Analyse LM metrics}
 
-# Read CSV
+# Read mlr metrics
 lm_metrics <- read.csv("../rk_results_07-09-2023/lm_model_performance_summary.csv",
                        stringsAsFactors = FALSE)
 
@@ -736,33 +583,20 @@ lm_df_plot <- lm_metrics_long %>%
 # Make sure hour is numeric
 lm_df_plot$hour <- as.numeric(lm_df_plot$hour)
 
-# Plot: Daily Evaluation of Multiple Linear Regression Model Performance
+# Daily Evaluation of Multiple Linear Regression Model Performance
 p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  # Lines and points for model metrics
   geom_line(linewidth = 1.2) +
-  geom_hline(
-    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),
-    color = "grey60"
-  ) +
+  geom_hline(aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),color = "grey60") +
   geom_point(size = 1.8) +
-  # Facet by date
   facet_wrap(~ date, ncol = 3, scales = "fixed") +
-  # Color and linetype scales
   scale_color_manual(
     values = c(
       "r_squared"     = "#6699CC",
       "adj_r_squared" = "#CC6677"
     ),
-    labels = c(
-      "r_squared"     = expression(R^2),
-      "adj_r_squared" = expression(Adjusted~R^2)
-    )
+    labels = c("r_squared"     = expression(R^2), "adj_r_squared" = expression(Adjusted~R^2))
   ) +
-  scale_linetype_manual(
-    name   = "",
-    values = c("Perfect Fit (R² = 1)" = "dotted")
-  ) +
-  # Labels
+  scale_linetype_manual(name   = "", values = c("Perfect Fit (R² = 1)" = "dotted")) +
   labs(
     title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
     subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
@@ -770,9 +604,7 @@ p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metr
     y        = "Metric Value",
     color    = "Metrics"
   ) +
-  # X-axis ticks
   scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  # Theme
   theme_minimal(base_size = 14) +
   theme(
     legend.position    = "top",
@@ -783,7 +615,7 @@ p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metr
     strip.text         = element_text(face = "bold")
   )
 
-# Show plot
+# Show the plot
 p_lm
 
 # Save plot
@@ -791,40 +623,135 @@ p_lm
 ```
 
 
-------------------------------------------------------------------------
+```{r Analyse CV metrics}
 
-CURRENTLY EXCLUDED. IS PROXIMITY TO WATER COVARIATE
+# Read cv metrics
+cv_metrics <- read.csv("../rk_results_07-09-2023/cross_validation_metrics.csv",
+                       stringsAsFactors = FALSE)
 
-Can be included, but destroys the results -> especially the visual appearance
+cv_metrics <- cv_metrics %>%
+  mutate(
+    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    date = as.Date(datetime_calc),
+    hour = lubridate::hour(datetime_calc)
+  )
 
-```{r}
-# Add proximity to water as another covariate
+# Reshape to long format
+cv_metrics_long <- cv_metrics %>%
+  pivot_longer(cols = c(cv_rmse, cv_mae),
+               names_to = "metric",
+               values_to = "value")
 
-# Convert grid data to point features
-points_vect <- as.points(grids)
+# Filter nur 2023
+df_plot <- cv_metrics_long %>%
+  filter(year(date) == 2023)
 
-# Convert point vector to sf object for spatial analysis
-grid_sf <- st_as_sf(points_vect)
+df_plot$hour <- as.numeric(df_plot$hour)
 
-# Load river network
-neckar <- st_read("../data/waterways/waterways_HD.gpkg")
+# Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
+p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
+  geom_point(size = 1.8) +
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
+  scale_color_manual(
+    values = c(
+      "cv_rmse" = "#6699CC",
+      "cv_mae"  = "#CC6677"
+    ),
+    labels = c("cv_rmse" = "Root Mean Square Error (RMSE)",
+      "cv_mae"  = "Mean Absolute Error (MAE)"
+    )
+  ) +
+  scale_linetype_manual(name   = "", values = c("Perfect Prediction (Error = 0)" = "dotted")) +
+  labs(
+    title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
+    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Error Metric [°C]",
+    color    = "Metrics"
+  ) +
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold")
+  )
 
-# Reproject to 32632
-neckar <- st_transform(neckar, crs = st_crs(temp))
+# Show the plot
+p_cv
 
-# Clip Neckar river to extent of the grid (AOI)
-neckar_clipped <- st_intersection(neckar, st_as_sfc(st_bbox(grid_sf)))
+# Save the plot
+#ggsave("../plots/cv_metrics_by_day_01-01-2023.png", plot = p_cv, width = 12, height = 8, dpi = 300)
+```
 
-# Calculate minimum distance from each grid point to the Neckar river
-grid_sf$dwater <- st_distance(grid_sf, neckar_clipped) %>%
-  apply(1, min) %>%
-  as.numeric()
+```{r Analyse RK metrics}
 
-# Cap at 500 meters to limit influence of distant points
-#grid_sf$dwater[grid_sf$dwater > 500] <- NA
+# Read rk metrics
+rk_metrics <- read.csv("../rk_results_07-09-2023/rk_metrics.csv",
+                       stringsAsFactors = FALSE)
 
-# Move 'dist_to_neckar' to first column
-grid_sf <- grid_sf[, c("dwater", setdiff(names(grid_sf), "dwater"))]
+# Parse datetime correctly
+rk_metrics <- rk_metrics %>%
+  mutate(
+    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    date = as.Date(datetime_calc),
+    hour = lubridate::hour(datetime_calc)
+  )
+
+# Reshape to long format
+rk_metrics_long <- rk_metrics %>%
+  pivot_longer(cols = c(rk_rmse, rk_mae),
+               names_to = "metric",
+               values_to = "value")
+
+# Filter year 2023
+df_plot <- rk_metrics_long %>%
+  filter(year(date) == 2023)
+
+# Make sure hour is numeric
+df_plot$hour <- as.numeric(df_plot$hour)
+
+# Plot: Daily Evaluation of the Regression-Kriging Model Performance Metrics
+p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),color = "grey60") +
+  geom_point(size = 1.8) +
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
+  scale_color_manual(
+    values = c(
+      "rk_rmse" = "#6699CC",
+      "rk_mae"  = "#CC6677"
+    ),
+    labels = c(
+      "rk_rmse" = "Root Mean Square Error (RMSE)",
+      "rk_mae"  = "Mean Absolute Error (MAE)"
+    )
+  ) +
+  scale_linetype_manual(name   = "", values = c("Perfect Prediction (Error = 0)" = "dotted")) +
+  labs(
+    title    = "Daily Evaluation of the Regression-Kriging Model Performance Metrics",
+    subtitle = "Hourly RMSE and MAE values from models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Error Metric [°C]",
+    color    = "Metrics"
+  ) +
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold")
+  )
+
+# Show the plot
+p_rk
+
+# Save plot
+# ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
