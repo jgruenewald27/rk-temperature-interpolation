@@ -48,114 +48,110 @@ library(car)
 
 --------------------------------------------------------------------------------
 
-```{r Load and preprocess data}
-# ================================================
-# DATA LOADING, CLEANING, AND COVARIATE PREPARATION
-# ================================================
+```{r Load temp data}
 
-# ================================================
 # Complete data import and pre-processing
 
-# # Read temperature data for the entire year of 2023
-# temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
-# 
-# # Removes rows where temp is NA
-# temp <- temp %>% filter(!is.na(temperature))
-# 
-# # Reproject the data for Germany
-# temp <- st_transform(temp, crs="EPSG:32632")
-# 
-# # Clean the data from outliers -> currently working with hard, manual breaks
-# # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
-# temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
-# 
-# # Calculate hour count since epoch, rounded down to current hour
-# temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
-# 
-# # Drop all measurement stations which didn't collect data the entire year around
-# temp_clean_station <- temp_clean %>%
-#   mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
-#   filter(!entity_id %in% c(
-#     "hd:DE_Heidelberg_69120_12:WeatherObserved",
-#     "hd:DE_Heidelberg_69120_34:WeatherObserved",
-#     "hd:DE_Heidelberg_69123_41:WeatherObserved",
-#     "hd:DE_Heidelberg_46:WeatherObserved"
-#   ))
-# 
-# # Check if exactly 4 stations were dropped
-# length(unique(na.omit(temp_clean$entity_id)))
-# length(unique(na.omit(temp_clean_station$entity_id)))
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Calculate hour count since epoch, rounded down to current hour
+temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Check if exactly 4 stations were dropped
+length(unique(na.omit(temp_clean$entity_id)))
+length(unique(na.omit(temp_clean_station$entity_id)))
 
 # Calculate hourly mean temp for cleaned data
-# temp_clean_station_hm <- temp_clean_station %>%
-#     group_by(entity_id, chour) %>%
-#     summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
-#     mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+temp_clean_station_hm <- temp_clean_station %>%
+    group_by(entity_id, chour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
+    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+```
 
-# ================================================
+--------------------------------------------------------------------------------
+
+```{r Load and preprocess data}
+
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
-# consistent timezone for the whole script
-tz_berlin <- "Europe/Berlin"
-
-#Shortcut -> import pre-processed hourly means
+# Import pre-processed hourly means, AOI and station coords
 temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
-
-temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
-
-# Read admin boundaries of HD
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
 
-# Reproject
-hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
-
-# Load the elevation data
+# Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
-
-# Reproject the elevation data to match correct CRS
-dem <- terra::project(dem, y = crs(temp_clean_station_hm))
-
-# Load the elevation data
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 
 # Mask out all values which are assigned to water and have value 101
 # Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
 tch[tch == 101] <- NA
 
-# Reproject the elevation data to match correct CRS
+# Reproject the data
+temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
+hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
+station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 tch <- terra::project(tch, y = crs(temp_clean_station_hm))
-
-# Check if the two covariates have the same crs
-crs(tch) == crs(dem)
-
-# Load the elevation data
-ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
-
-# Reproject the elevation data to match correct CRS
 ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
-# Check if CRS is correct
-crs(ghs_bh) == crs(dem)
+if (!identical(crs(tch), crs(dem))) {
+  stop("CRS mismatch: Canopy height and DEM do not have the same coordinate reference system.")
+}
 
-# ================================================
+if (!identical(crs(ghs_bh), crs(dem))) {
+  stop("CRS mismatch: Building height and DEM do not have the same coordinate reference system.")
+}
+
+cat("All covariates share the same CRS.\n")
+
+# Convert to SpatialPointsDataFrame
+station_coords <- as(station_coords_sf, "Spatial")
+
 # Create a Raster Stack for all covariate information
 
-# Check resolution of each raster
-terra::res(dem)
-terra::res(tch)
-terra::res(ghs_bh)
+cat("Checking input raster resolutions (x by y):\n")
+cat(sprintf("DEM:    %s\n", paste(terra::res(dem), collapse = " x ")))
+cat(sprintf("TCH:    %s\n", paste(terra::res(tch), collapse = " x ")))
+cat(sprintf("GHS_BH: %s\n\n", paste(terra::res(ghs_bh), collapse = " x ")))
 
-# Align TCH and building height to DEM resolution and extent
+# Align canopy height and building height to DEM resolution and extent
 tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
 ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
 
-# Stack all layers
+# Check alignment after resampling
+if (!terra::compareGeom(dem, tch_aligned, ghs_bh_aligned, stopOnError = FALSE)) {
+  stop("Covariate rasters are not perfectly aligned after resampling. Check extent/resolution/CRS.")
+}
+
+# Combine layers into a single SpatRaster stack
 env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
 
 # Rename layers for clarity
 names(env_stack) <- c("elevation", "canopy_height", "building_height")
 
-# ================================================
 # Code to include lat and lon information in raster stack
 
 # Also add lat and lon to the raster stack
@@ -174,130 +170,78 @@ names(lat_raster) <- "lat"
 # Stack the three raster layers
 grids <- c(env_stack, lon_raster, lat_raster)
 
-# ================================================
-# Conversion when running the analysis without proximity to water
 # Preparation of grid as a covariate for running RK
-
-# Convert SpatRaster to RasterLayer (raster package)
 grids_ras <- stack(grids)
 
-# Now convert to SpatialGridDataFrame
-grids_sp <- as(grids_ras, "SpatialGridDataFrame") 
+# Convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame")
 
 grids_sp@data
-
-# Extract coordinates of the measurement stations
-# maybe use them as covariates
-
-# ================================================
-# # Extract coordinates and data into a data frame
-# coords <- st_coordinates(temp_clean_station_hm)
-# locs <- cbind(temp_clean_station_hm, coords)
-# locs <- as.data.frame(locs)
-# 
-# # Keep only one row per station and select relevant columns
-# station_coords <- locs %>%
-#   dplyr::distinct(entity_id, .keep_all = TRUE) %>%
-#   dplyr::select(entity_id, X, Y)
-# 
-# coordinates(station_coords) <- ~ X + Y
-# proj4string(station_coords) <- CRS(proj4string(grids_sp))
-# 
-# length(unique(stations$entity_id))
-
-# Shortcut: load the pre-processed layer
-station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
-
-# Reproject
-station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
-
-# Convert to SpatialPointsDataFrame
-station_coords <- as(station_coords_sf, "Spatial")
 ```
 
 --------------------------------------------------------------------------------
 
-```{r create_output_folder}
-output_dir <- "../rk_results_07-2023"
+```{r Create output folder}
+
+# Create output dirs
+output_dir <- "../rk_test"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
-# Define subdirectories for specific output types
 variogram_dir <- file.path(output_dir, "variogram")
 cv_dir        <- file.path(output_dir, "cross_validation")
 rk_dir        <- file.path(output_dir, "rk_predictions")
 
-# Create subdirectories if they don't exist
 dir.create(variogram_dir, showWarnings = FALSE)
 dir.create(cv_dir, showWarnings = FALSE)
 dir.create(rk_dir, showWarnings = FALSE)
 
-# ================================================
-# Datetime helpers (labels & filenames)
-# ================================================
+# Datetime helpers
+tz_berlin <- "Europe/Berlin"
+
 ts_to_posix <- function(ch) {
-  # If already POSIXct, return as is
-  if (inherits(ch, "POSIXt")) {
-    return(ch)
-  }
-  # If numeric (hours since 1970)
-  if (is.numeric(ch)) {
-    return(as.POSIXct(ch * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
-  }
-  # If character string, try to parse
-  as.POSIXct(ch, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin")
+  if (inherits(ch, "POSIXt")) return(ch)
+  if (is.numeric(ch)) return(as.POSIXct(ch * 3600, origin = "1970-01-01", tz = tz_berlin))
+  as.POSIXct(ch, format = "%Y-%m-%d %H:%M:%S", tz = tz_berlin)
 }
 
 nice_dt     <- function(x) format(x, "%Y-%m-%d %H:00 %Z")                                   
 file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")                                       
 ```
 
-```{r main_loop}
-# ================================================
-# Loop through 24 hourly time stamps in `temp_clean_station_hm`
-# ================================================
+--------------------------------------------------------------------------------
 
-# Get unique time stamps
-# timestamps <- unique(temp_clean_station_hm$chour)[1:168]  
+```{r Main loop}
 
-# ================================================
-# Select timestamps for analysis window
-# ================================================
-
+# Set timestamps and analysis period
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
-
-# Define your analysis period (example: one day in July 2023)
 start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-31 23:00:00", tz = "Europe/Berlin")
-
-# Keep only timestamps within the desired window
+end_date   <- as.POSIXct("2023-07-01 03:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
-
-# Safety check
 cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
 
-# Counters + progress bar
+# Counters and progress bar
 total     <- length(timestamps)
 completed <- 0L
 skipped   <- 0L
 pb <- txtProgressBar(min = 0, max = total, style = 3)
 cat(sprintf("Processing %d timestamps…\n", total))
 
-# Loop through each time stamp
+# Init empty containers
 total_metrics <- data.frame()
 all_temp_data <- data.frame()
 
+# Main loop over timestamps
 for (i in seq_along(timestamps)) {
   ts <- timestamps[i]                                    
   dt_local <- ts_to_posix(ts)                     
   dt_lab   <- nice_dt(dt_local)                   
   dt_file  <- file_dt(dt_local)                   
   cat(sprintf("\n[%d/%d] Processing: chour=%s  (%s)\n", i, total, ts, dt_lab))  
-
+  
   # ------------------------------------------------
-  # STEP 1: Filter hourly data and plot temperature
+  # STEP 1: Filter hourly data and visualize
   # ------------------------------------------------
   
-  # Select temperature data for the current hour
   sel_temp_hm <- temp_clean_station_hm %>%
     filter(hour == ts)
   
@@ -311,8 +255,7 @@ for (i in seq_along(timestamps)) {
   # Append the selected temperature data to full dataset
   all_temp_data <- rbind(all_temp_data, sel_temp_hm)
   
-  # Generate line plot showing hourly mean temperature for each station
-  # across the time range covered so far in the loop
+  # plot hourly mean temperatures for all stations
   p_all <- ggplot(all_temp_data, aes(x = hour, y = hm_temp, color = entity_id, group = entity_id)) +  
     geom_line() +
     geom_point(size = 1) +
@@ -327,37 +270,32 @@ for (i in seq_along(timestamps)) {
          plot = p_all, width = 10, height = 6, dpi = 300)
 
   # ------------------------------------------------
-  # STEP 2: Add covariates (elev, canopy, bldg) from grid
+  # STEP 2: Extract covariates from spatial grid
   # ------------------------------------------------
   
   # Convert Spatial object to RasterBrick
   r_brick <- brick(grids_sp)
-  
   # Convert RasterBrick to terra SpatRaster object
-  grid_terra <- rast(r_brick)
-  
+  grid_terra <- rast(r_brick) 
   # Extract raster values at the point locations
   extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
-  
   # Remove the first column (ID)
   extracted_vals <- extracted_vals[,-1]
-  
   # Combine the point data with the extracted raster values
   temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
   
   # ------------------------------------------------
-  # STEP 3: Fit linear model and prepare spatial data
+  # STEP 3: Fit multiple linear regression
   # ------------------------------------------------
   
-  # Fit multiple linear regression model
   lm.temp_shm <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
   summary_lm <- summary(lm.temp_shm)
   
-  # Compute residuals and predictions
+  # Calculate fitted values and residuals
   pred <- predict(lm.temp_shm, temp_shm.ex)
   resid <- temp_shm.ex$hm_temp - pred
   
-  # Extract metrics
+  # Collect regression metrics
   model_metrics <- data.frame(
     timestamp      = ts,
     r_squared      = summary_lm$r.squared,
@@ -374,28 +312,23 @@ for (i in seq_along(timestamps)) {
     BIC            = BIC(lm.temp_shm)
   )
   
-  # Append to tracking data frame
+  # Append results to cumulative LM table
   if (!exists("lm_metrics_all")) {
     lm_metrics_all <- model_metrics
   } else {
     lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
   }
 
-  # Save model's residuals back into original df as new column
+  # Attach residuals to dataset and convert to sf for spatial operations
   temp_shm.ex$residuals <- resid
-  
-  # Convert df into spatial object using existing geometry and
-  # Convert MULTIPOINT geometries to POINT
   temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
-  
   st_crs(temp_shm.sf) <- st_crs(grids_sp)
   
   # ------------------------------------------------
-  # STEP 4: Compute anisotropy & fit directional variogram
+  # STEP 4: Compute variogram and fit model
   # ------------------------------------------------
   
   # Compute empirical variogram map of model residuals
-  # This helps visualize spatial autocorrelation in all directions
   varmap <- variogram(residuals ~ 1, data = temp_shm.sf, map = TRUE,
                     # cutoff is half the spatial extent (or diameter) of the study area
                     cutoff = sqrt(areaSpatialGrid(grids_sp)) / 2, 
@@ -454,26 +387,22 @@ for (i in seq_along(timestamps)) {
   dev.off()
   
   # ------------------------------------------------
-  # STEP 5: Cross-validation of residual kriging model
+  # STEP 5: Cross-validation of variogram model
   # ------------------------------------------------
 
-  # Perform leave-one-out cross-validation (LOOCV) of the kriging model
   cv_resid <- krige.cv(residuals ~ 1,
                        locations = temp_shm.sf,
                        model = rvgm.temp,
                        nfold = nrow(temp_shm.sf),   # one fold per observation = LOOCV
                        nmax = 10)                   # max number of neighbors used for prediction
   
-  # Compute CV metrics
+  # Compute CV performance metrics
   cv_rmse <- sqrt(mean(cv_resid$residual^2))
   cv_mae  <- mean(abs(cv_resid$residual))
   cv_me   <- mean(cv_resid$residual)
+  cat("CV RMSE:", round(cv_rmse, 2), "MAE:", round(cv_mae, 2), "Bias:", round(cv_me, 2), "\n")
   
-  cat("CV RMSE:", round(cv_rmse, 2), "\n")
-  cat("CV MAE :", round(cv_mae, 2), "\n")
-  cat("CV Bias:", round(cv_me, 2), "\n")
-  
-  # Create df with CV metrics for current timestamp
+  # Store CV results  
   cv_metrics <- data.frame(
     timestamp = ts,
     cv_rmse   = cv_rmse,
@@ -481,79 +410,61 @@ for (i in seq_along(timestamps)) {
     cv_bias   = cv_me
   )
   
-  # Append metrics to tracking df across all time steps
   if (!exists("cv_metrics_all")) {
     cv_metrics_all <- cv_metrics
   } else {
     cv_metrics_all <- rbind(cv_metrics_all, cv_metrics)
   }
   
-  # Create and save scatterplot of predicted vs residual values from CV
+  # Plot predicted vs residuals (CV)
   p_cv <- ggplot(cv_resid, aes(x = var1.pred, y = residual)) +
     geom_point() +
     geom_hline(yintercept = 0, linetype = "dashed") +
-    labs(title = paste("Cross-validation Residuals\n", dt_lab), x = "Predicted", y = "Residual") +  
+    labs(title = paste("Cross-validation Residuals\n", dt_lab), x = "Predicted", y = "Residual") +
     theme_minimal(base_size = 12)
   
   ggsave(filename = file.path(cv_dir, paste0(dt_file, "_cv_residuals_plot.png")),  
          plot = p_cv, width = 8, height = 6, dpi = 300)
 
   # ------------------------------------------------
-  # STEP 6: Predict regression trend and kriging residuals
+  # STEP 6: Regression Kriging prediction
   # ------------------------------------------------
     
-  # Define a gstat object for kriging using the fitted residual variogram
-  g.resid <- gstat(
-    id = c("residuals"),
-    formula = residuals ~ 1,
-    data = temp_shm.sf,
-    nmax = 31,
-    model = rvgm.temp
-  )
+  # define kriging model using fitted variogram
+  g.resid <- gstat(id = c("residuals"), formula = residuals ~ 1, data = temp_shm.sf,
+                   nmax = 31, model = rvgm.temp)
   
-  # Predict the temperature trend component using the regression model
+  # Predict deterministic trend (LM) and stochastic residuals (OK)
   locTEMP.reg <- predict(lm.temp_shm, grids_sp)
-  
-  # OK of the regression residuals to model spatial autocorrelation
   locTEMP <- predict(g.resid, grids_sp, beta=1, BLUE=FALSE)
   
-  # Combine the regression prediction with kriged residuals to get final RK predictions
+  # Combine LM + kriged residuals
   rk.pred <- locTEMP.reg + locTEMP$residuals.pred
   
-  # Add the RK predictions as a new variable to the spatial grid object
+  # Add predictions to grid and export as GeoTIFF
   grid_out <- grids_sp
   grids_sp$rk_pred <- rk.pred
-  
-  # Convert SpatialPixelsDataFrame → SpatRaster for export
   rk_raster <- terra::rast(grids_sp["rk_pred"])
-  
-  # Define output .tif path
   rk_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map.tif"))
-  
-  # Write GeoTIFF
   terra::writeRaster(
     rk_raster,
     filename = rk_file_tif,
     overwrite = TRUE,
     gdal = c("COMPRESS=LZW")  # optional compression
   )
+  cat("RK prediction saved as GeoTIFF:", rk_file_tif, "\n")
   
-  cat("  → RK prediction saved as GeoTIFF:", rk_file_tif, "\n")
-  
-  # Define output filename for the RK prediction map
+  # Plot RK prediction map
   rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
-  
-  # Generate and save the RK prediction map
   png(rk_file_img, width = 8, height = 6, units = "in", res = 300)
   print(
     spplot(grids_sp, "rk_pred",
            main = paste("Regression Kriging Prediction (°C)\n", dt_lab),   
-           sp.layout = list("sp.points", station_coords, pch = 20, col = "white"))
-  )
+           sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
   dev.off()
   
   # ------------------------------------------------
-  # STEP 7: Evaluate RK predictions at observation stations
+  # STEP 7: Evaluate RK predictions at station points
   # ------------------------------------------------
   
   # Match station coordinates with observed stations only
@@ -575,31 +486,21 @@ for (i in seq_along(timestamps)) {
   # Calculate prediction error
   rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
   
-  # Calculate evaluation metrics for RK performance
+  # Compute RK evaluation metrics
   rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
   mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
   bias <- mean(rk_eval$residual, na.rm = TRUE)
+  cat("RK RMSE:", round(rmse, 2), "MAE:", round(mae, 2), "Bias:", round(bias, 2), "\n")
   
-  cat("RK RMSE :", round(rmse, 2), "\n")
-  cat("RK MAE  :", round(mae, 2), "\n")
-  cat("RK Bias :", round(bias, 2), "\n")
-  
-  # Store metrics in df for current timestamp
-  rk_metrics <- data.frame(
-    timestamp = ts,
-    rk_rmse   = rmse,
-    rk_mae    = mae,
-    rk_bias   = bias
-  )
-  
-  # Append metrics to cumulative RK metrics tracking object
+  # Append RK metrics
+  rk_metrics <- data.frame(timestamp = ts, rk_rmse   = rmse, rk_mae    = mae, rk_bias   = bias)
   if (!exists("rk_metrics_all")) {
     rk_metrics_all <- rk_metrics
   } else {
     rk_metrics_all <- rbind(rk_metrics_all, rk_metrics)
   }
   
-  # Save RK residuals plot
+  # Plot RK residuals scatter
   rk_resid_plot <- ggplot(rk_eval, aes(x = rk_pred, y = residual)) +
     geom_point() +
     geom_hline(yintercept = 0, linetype = "dashed") +
@@ -610,19 +511,23 @@ for (i in seq_along(timestamps)) {
   ggsave(filename = file.path(rk_dir, paste0(dt_file, "_rk_residuals_plot.png")),  
          plot = rk_resid_plot, width = 8, height = 6, dpi = 300)
   
+  # Update progress bar
   completed <- completed + 1L 
   setTxtProgressBar(pb, completed)
   cat("\n")
-  cat(sprintf("  → done. Completed: %d/%d (skipped: %d)\n",      
+  cat(sprintf("done. Completed: %d/%d (skipped: %d)\n",      
               completed, total, skipped))                        
 }
 
-# Close progress bar + final summary
+# ------------------------------------------------
+# Finalize and save results
+# ------------------------------------------------
+
 close(pb)                                                        
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
             completed, total, skipped))                         
 
-# Save all LM metrics to a single CSV file
+# Save linear model metrics
 metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
 if (exists("lm_metrics_all")) {                                     
   lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
@@ -630,7 +535,7 @@ if (exists("lm_metrics_all")) {
   write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
 }
 
-# Save all CV metrics to a single CSV file
+# Save CV metrics
 cv_file <- file.path(output_dir, "cross_validation_metrics.csv")
 if (exists("cv_metrics_all")) {                                     
   cv_metrics_all$datetime_local <- ts_to_posix(cv_metrics_all$timestamp) 
@@ -638,7 +543,7 @@ if (exists("cv_metrics_all")) {
   write.csv(cv_metrics_all, cv_file, row.names = FALSE)
 }
 
-# Save all RK metrics to a single CSV file
+# Save RK metrics
 rk_file <- file.path(output_dir, "rk_metrics.csv")
 if (exists("rk_metrics_all")) {                                   
   rk_metrics_all$datetime_local <- ts_to_posix(rk_metrics_all$timestamp)
