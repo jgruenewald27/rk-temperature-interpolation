@@ -85,11 +85,8 @@ length(unique(na.omit(temp_clean$entity_id)))
 length(unique(na.omit(temp_clean_station$entity_id)))
 
 temp_monthly_mean_2023 <- temp_clean_station %>%
-  # Restrict to year 2023
   filter(year(dateobserved) == 2023) %>%
-  # Collapse to month (e.g. 2023-01-01, 2023-02-01, …)
   mutate(month = floor_date(dateobserved, "month")) %>%
-  # Group by station and month
   group_by(entity_id, month) %>%
   summarise(
     mm_temp = mean(temperature, na.rm = TRUE),  
@@ -221,7 +218,7 @@ temp_monthly_mean_2023
 --------------------------------------------------------------------------------
 
 ```{r create_output_folder}
-output_dir <- "../rk_monthly_mean"
+output_dir <- "../rk_monthly_mean_new"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Define subdirectories for specific output types
@@ -508,6 +505,22 @@ for (i in seq_along(timestamps)) {
   # Add the RK predictions as a new variable to the spatial grid object
   grid_out <- grids_sp
   grids_sp$rk_pred <- rk.pred
+  
+  # Convert SpatialPixelsDataFrame → SpatRaster for export
+  rk_raster <- terra::rast(grids_sp["rk_pred"])
+  
+  # Define output .tif path
+  rk_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map.tif"))
+  
+  # Write GeoTIFF
+  terra::writeRaster(
+    rk_raster,
+    filename = rk_file_tif,
+    overwrite = TRUE,
+    gdal = c("COMPRESS=LZW")  # optional compression
+  )
+  
+  cat("  → RK prediction saved as GeoTIFF:", rk_file_tif, "\n")
   
   # Define output filename for the RK prediction map
   rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
