@@ -218,7 +218,7 @@ station_coords <- as(station_coords_sf, "Spatial")
 --------------------------------------------------------------------------------
 
 ```{r create_output_folder}
-output_dir <- "../rk_results_07-09-2023"
+output_dir <- "../rk_results_07-2023"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Define subdirectories for specific output types
@@ -251,11 +251,6 @@ nice_dt     <- function(x) format(x, "%Y-%m-%d %H:00 %Z")
 file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")                                       
 ```
 
-
-```{r}
-temp_clean_station_hm
-```
-
 ```{r main_loop}
 # ================================================
 # Loop through 24 hourly time stamps in `temp_clean_station_hm`
@@ -271,8 +266,8 @@ temp_clean_station_hm
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
 
 # Define your analysis period (example: one day in July 2023)
-start_date <- as.POSIXct("2023-07-09 00:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-09 23:00:00", tz = "Europe/Berlin")
+start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-31 23:00:00", tz = "Europe/Berlin")
 
 # Keep only timestamps within the desired window
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
@@ -1100,7 +1095,7 @@ p_rk_ref <- (p_rk_map + p_ref_map +
 p_rk_ref
 
 # Save as PNG
-# ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
+ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
 ```
 
 Short explanation of the following chunk:
@@ -1293,7 +1288,7 @@ landcover_colors <- c(
 )
 ```
 
-```{r}
+```{r Correlation by land cover class}
 
 # Summarise model–reference correlation by land cover class
 cor_summary <- landuse %>%
@@ -1345,4 +1340,103 @@ p_landcover_corr
 
 # Save as PNG
 ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+```
+
+--------------------------------------------------------------------------------
+
+Comparison of the monthly mean temperature surface with the 
+RK temperature prediction surface for hourly means
+
+```{r Temporal variability analysis per pixel}
+
+# Load monthly mean RK surface
+mm_july_rk  <- terra::rast("../rk_monthly_mean/rk_predictions/2023_07_rk_prediction_map.tif")
+
+# Directory with hourly RK predictions
+rk_dir <- "../rk_results_07-09-2023/rk_predictions"
+
+# List all hourly RK raster files for July 2023
+rk_files <- list.files(rk_dir, pattern = "2023-07.*_rk_prediction_map\\.tif$", full.names = TRUE)
+
+# Stack all hourly rasters
+rk_stack <- rast(rk_files)
+
+# Pixel-wise mean temperature (hourly average over July)
+rk_mean_july <- app(rk_stack, fun = mean, na.rm = TRUE)
+
+# Pixel-wise SD (temporal variability)
+rk_sd_july <- app(rk_stack, fun = sd, na.rm = TRUE)
+
+# Coefficient of variation (relative variability)
+rk_cv_july <- rk_sd_july / rk_mean_july
+
+# Plot SD map
+plot(rk_sd_july, col = viridis(20),
+     main = "Hourly RK Temperature Variability (SD, July 2023)",
+     xlab = "", ylab = "")
+
+# Plot Coefficient of variation map
+plot(rk_cv_july, col = viridis(20),
+     main = "Relative RK Temperature Variability (CV, July 2023)",
+     xlab = "", ylab = "")
+
+# Compare monthly mean, hourly mean, and hourly SD
+plot(c(mm_july_rk, rk_mean_july, rk_sd_july),
+     col = viridis(20),
+     main = c("Monthly Mean RK (from monthly model)",
+              "Hourly Mean RK (average of all hours)",
+              "Hourly Variability (SD across hours)"))
+```
+
+```{r Residual variability relative to the monthly mean RK}
+
+# Residuals = hourly RK minus monthly mean RK
+res_stack <- rk_stack - mm_july_rk
+
+# Pixel-wise SD of residuals (temporal variability)
+res_var <- app(res_stack, fun = sd, na.rm = TRUE)
+
+# Convert to data frame for plotting
+res_df <- as.data.frame(res_var, xy = TRUE, na.rm = TRUE)
+names(res_df)[3] <- "residual_sd"
+
+# Plot spatial SD map
+ggplot(res_df, aes(x, y, fill = residual_sd)) +
+  geom_raster() +
+  scale_fill_viridis_c(name = "SD (°C)") +
+  coord_equal() +
+  theme_minimal() +
+  labs(title = "Residual Variability (Hourly RK vs Monthly Mean RK, July 2023)")
+
+# Extract mean SD per landcover polygon
+res_var_by_lc <- terra::extract(res_var, landuse, fun = mean, na.rm = TRUE)
+
+# Rename value column
+names(res_var_by_lc)[2] <- "mean_sd"
+
+# Add landcover class names
+res_var_by_lc$class_2018 <- landuse$class_2018
+
+# Aggregate by class
+res_var_summary <- res_var_by_lc %>%
+  group_by(class_2018) %>%
+  summarise(mean_sd = mean(mean_sd, na.rm = TRUE)) %>%
+  arrange(desc(mean_sd))
+
+# Plot mean SD by landcover class
+ggplot(res_var_summary, aes(x = reorder(class_2018, mean_sd), y = mean_sd, fill = mean_sd)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(name = "SD (°C)") +
+  labs(
+    title = "Residual Variability by Landcover Class",
+    subtitle = "Standard deviation of hourly RK deviations from monthly RK mean (July 2023)",
+    x = "Landcover Class (class_2018)",
+    y = "Mean SD (°C)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    axis.text.y = element_text(size = 9),
+    legend.position = "right"
+  )
 ```
