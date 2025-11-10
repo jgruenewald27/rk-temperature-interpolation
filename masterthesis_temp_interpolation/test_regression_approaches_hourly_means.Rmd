@@ -254,7 +254,7 @@ for (m in names(index_by_month)) {
 # Set timestamps and analysis period
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
 start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-10 23:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-31 23:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
 cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
 
@@ -709,44 +709,16 @@ p_lm
 
 How well do the environmental covariates describe hourly mean temperature
 
-```{r}
-ggplot(fit, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), adj_r_squared)) +
-  geom_line() + geom_point(size=1) +
-  labs(x="Zeitstempel", y="adj. R²", title="Modellgüte über die Zeit") +
-  theme_minimal(12)
-
-ggplot(coef_all, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), beta_std, color=term)) +
-  geom_hline(yintercept=0, linetype="dashed") +
-  geom_line() + geom_point(size=0.9) +
-  labs(x="Zeitstempel", y="β (standardisiert)",
-       title="Einflussstärke der Kovariaten über die Zeit") +
-  theme_minimal(12)
-
-ggplot(coef_all, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), term, fill=beta_std)) +
-  geom_tile() +
-  scale_fill_gradient2(name="β") +
-  labs(x="Zeitstempel", y="Kovariate", title="Heatmap der standardisierten Effekte") +
-  theme_minimal(12)
-
-ggplot(coef_all, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), lmg, fill=term)) +
-  geom_area(position="fill") +
-  labs(x="Zeitstempel", y="Anteil an R² (LMG)",
-       title="Relative Wichtigkeit der Kovariaten (sum=1)") +
-  theme_minimal(12)
-```
+Following plot can answer this research question:
+- [ ] Wie gut beschreiben die covariates die hourly mean temperature zu bestimmten timestamps 
+- [ ] Was sind mögliche Erklärungen für diese patterns? Welche Prozesse können zu diesen patterns führen?
 
 ```{r}
-str(coef_all)
-```
-
-
-```{r}
-
-# Import z-normalized MLR regression model metrics
+# Read and prepare data
 coef_all <- read.csv(coef_file_z)
 fit <- read.csv(metrics_file_z)
 
-# sicherstellen, dass timestamp gleich formatiert ist wie in coef_all
+# Format timestamps in both data frames
 fit <- fit %>%
   mutate(
     timestamp = if_else(
@@ -754,8 +726,11 @@ fit <- fit %>%
       paste0(timestamp, " 00:00:00"),
       timestamp
     ),
-    timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin")
-  )
+    timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin"),
+    month = month(timestamp),
+    year  = year(timestamp)
+  ) %>%
+  filter(month == 7 & year == 2023)
 
 coef_all <- coef_all %>%
   mutate(
@@ -765,106 +740,123 @@ coef_all <- coef_all %>%
       timestamp
     ),
     timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin"),
-    date = as.Date(timestamp),
-    hour = hour(timestamp)
+    date  = as.Date(timestamp),
+    hour  = hour(timestamp),
+    month = month(timestamp),
+    year  = year(timestamp)
   ) %>%
+  filter(month == 7 & year == 2023) %>%
   left_join(fit %>% select(timestamp, r_squared), by = "timestamp")
 
+# Determine pagination structure
+days_per_page <- 12
+n_pages <- ceiling(length(unique(coef_all$date)) / days_per_page)
 
-# Check grouping structure
-# Make sure you have roughly 10 unique days and 24 hours per day
-# length(unique(coef_all$date))
+# Output directory
+output_plots <- "../plots/figures_covariate_importance"
+if (!dir.exists(output_dir)) dir.create(output_dir)
 
+# Paginated plotting loop
+for (i in seq_len(n_pages)) {
 
-# Plot daily variation of covariates importance
-ggplot(coef_all, aes(x = hour, y = lmg, fill = term)) +
-  geom_area(position = "fill", alpha = 0.95) +
-  geom_line(aes(y = r_squared), color = "black", linewidth = 0.8) +
-  facet_wrap(~ date, ncol = 2) +
-  scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
-
-  # left axis = share in %, right axis = R² (0–1)
-  scale_y_continuous(
-    name = "Share of R² (LMG, Sum = 1)",
-    labels = percent_format(accuracy = 1),
-    sec.axis = sec_axis(~ ., name = "Model R²")
-  ) +
-  scale_fill_manual(
-    name = "Covariate",
-    values = c(
-      "building_height_z" = "#E69F00",  # orange
-      "canopy_height_z"   = "#009E73",  # teal
-      "elevation_z"       = "#56B4E9"   # blue
-    ),
-    labels = c(
-      "building_height_z" = "Building height (z)",
-      "canopy_height_z"   = "Canopy height (z)",
-      "elevation_z"       = "Elevation (z)"
+  p_cov <- ggplot(coef_all, aes(x = hour, fill = term)) +
+    geom_area(aes(y = lmg), position = "fill", alpha = 0.95) +
+    geom_line(aes(y = r_squared), color = "black", linewidth = 0.8) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
+    scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+    scale_y_continuous(
+      name = "Share of R² (LMG, Sum = 1)",
+      labels = percent_format(accuracy = 1),
+      sec.axis = sec_axis(~ ., name = "Model R²")
+    ) +
+    scale_fill_manual(
+      name = "Covariate",
+      values = c(
+        "building_height_z" = "#E69F00",  # orange
+        "canopy_height_z"   = "#009E73",  # teal
+        "elevation_z"       = "#56B4E9"   # blue
+      ),
+      labels = c(
+        "building_height_z" = "Building height (z)",
+        "canopy_height_z"   = "Canopy height (z)",
+        "elevation_z"       = "Elevation (z)"
+      )
+    ) +
+    labs(
+      title    = sprintf("Daily Variation of Covariate Importance (Page %d/%d)", i, n_pages),
+      subtitle = "Left axis: relative contribution of covariates (LMG, % of R²)\nRight axis: total model R² based on hourly MLR with z-standardized covariates",
+      x = "Hour of Day",
+      y = "Share of R² (LMG, Sum = 1)"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "bottom",
+      legend.title     = element_text(face = "bold"),
+      legend.key.width = unit(2, "lines"),
+      strip.text       = element_text(face = "bold", size = 12),
+      panel.spacing    = unit(0.8, "lines"),
+      plot.title       = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.subtitle    = element_text(size = 12, hjust = 0.5)
     )
-  ) +
-  labs(
-    x = "Hour of Day",
-    y = "Share of R² (LMG, Sum = 1)",
-    title = "Daily Variation of Covariate Importance",
-    subtitle = "z-standardized covariates within each hour across all stations\nRelative contribution of static environmental covariates to hourly mean temperature prediction"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_text(face = "bold"),
-    legend.key.width = unit(2, "lines"),
-    strip.text = element_text(face = "bold", size = 12),
-    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
-    plot.subtitle = element_text(size = 12, hjust = 0.5)
+
+  # Save each page
+  ggsave(
+    filename = file.path(output_plots, sprintf("covariate_importance_page_%02d.png", i)),
+    plot = p_cov,
+    width = 12, height = 10, dpi = 300
   )
+}
 ```
 
 The figure illustrates how the relative influence of topography, vegetation, and urban structure on hourly mean temperature varies over the course of each day.
 
 Overall Canopy height has the smallest impact of the three covariates on the hourly mean temperature predictions. Across the entire day, elevation has the biggest impact with building height having a strong influence on hourly mean temperature during nighttime.
 
+The following figure will answer this research questions:
+- [ ] Bei welchen timestamps sind die covariates besonders signifikant? Gibt es da bestimmte patterns bei bestimmten klimatischen Bedingungen oder täglich widerkehrende Regelmäßigkeiten?
+
 ```{r}
-coef_sig <- coef_all |>
-  dplyr::group_by(term) |>
-  dplyr::mutate(p_bh = p.adjust(p_robust, method="BH"),
-                sig  = p_bh < 0.05) |>
-  dplyr::ungroup()
+# Output directory for saving figures
+output_pval <- "../plots/figures_pvalues"
+if (!dir.exists(output_dir)) dir.create(output_dir)
 
-ggplot(coef_sig, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), term, fill=sig)) +
-  geom_tile() +
-  scale_fill_manual(values=c("TRUE"="black","FALSE"="grey85"), name="Signifikant (BH<0.05)") +
-  labs(x="Zeitstempel", y="Kovariate", title="Signifikanz über die Zeit") +
-  theme_minimal(12)
+# Loop over pages
+for (i in seq_len(n_pages)) {
 
-ggplot(coef_sig, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), term, fill=beta_std)) +
-  geom_tile() +
-  geom_point(data=dplyr::filter(coef_sig, sig), shape=21, size=1.5, color="black") +
-  scale_fill_gradient2(name="β") +
-  labs(x="Zeitstempel", y="Kovariate",
-       title="Effektstärke (β) mit Signifikanz-Markern") +
-  theme_minimal(12)
+  p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_robust)) +
+    geom_tile(color = "grey80") +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
+    scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+    scale_fill_viridis_c(
+      option = "C", direction = -1,
+      limits = c(0, 0.05),
+      labels = label_number(accuracy = 0.01),
+      name = "p-value (robust)"
+    ) +
+    labs(
+      x = "Hour of Day",
+      y = "Covariate",
+      title = sprintf("Hourly Significance of Covariates (Page %d/%d)", i, n_pages),
+      subtitle = "Darker colors indicate higher significance (lower p-values)\nGrey cells: non-significant (p ≥ 0.05)"
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      strip.text = element_text(face = "bold"),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      panel.spacing = unit(0.8, "lines"),
+      plot.title = element_text(face = "bold", size = 15, hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5)
+    )
 
-top_hours <- coef_sig |>
-  dplyr::group_by(term) |>
-  dplyr::slice_max(order_by=abs(beta_std), n=5, with_ties=FALSE) |>
-  dplyr::ungroup()
-
-ggplot(top_hours,
-       aes(x=reorder(format(as.POSIXct(timestamp, tz="Europe/Berlin"), "%d.%m %H:%M"),
-                     abs(beta_std)),
-           y=beta_std, color=sig)) +
-  geom_segment(aes(xend=..x.., y=0, yend=beta_std)) +
-  geom_point(size=2) +
-  facet_wrap(~term, scales="free_y") +
-  coord_flip() +
-  scale_color_manual(values=c("TRUE"="black","FALSE"="grey60"), name="BH<0.05") +
-  labs(x="Timestamp", y="β", title="Stärkste Zeitpunkte pro Kovariate") +
-  theme_minimal(12)
-
-
-
+  # Save each page
+  ggsave(
+    filename = file.path(output_pval, sprintf("covariate_pvalues_page_%02d.png", i)),
+    plot = p_pval,
+    width = 12, height = 10, dpi = 300
+  )
+}
 ```
-
 
 --------------------------------------------------------------------------------
 
