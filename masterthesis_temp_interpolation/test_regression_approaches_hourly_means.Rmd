@@ -26,6 +26,10 @@ library(randomForest)
 library(nlme)
 library(automap)
 library(mgcv)
+library(lmtest)
+library(sandwich)
+library(broom)
+library(relaimpo)
 
 # Data Manipulation & Wrangling
 library(tidyverse)
@@ -221,6 +225,9 @@ if (file.exists(metrics_file_z)) {
   file.remove(metrics_file_z)
   cat("Old metrics file removed — starting fresh.\n")
 }
+
+# where to store per-covariate results from the z-MLR
+coef_file_z <- file.path(lm_dir_z, "lm_z_coefficients_by_timestamp.csv")
 ```
 
 ```{r}
@@ -239,10 +246,9 @@ for (m in names(index_by_month)) {
 }
 ```
 
-
 --------------------------------------------------------------------------------
 
-```{r main_loop}
+```{r Main loop}
 
 
 # Set timestamps and analysis period
@@ -397,31 +403,30 @@ for (i in seq_along(timestamps)) {
   # Convert MULTIPOINT geometries to POINT
   temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
   
-  # From here on you can fit with the standardized predictors:
-  reg_model_z <- lm(hm_temp ~ elevation_z + canopy_height_z + building_height_z,
-                data = temp_shm.ex)
-  
+  # z-MLR: fit with standardized predictors
+  reg_model_z  <- lm(hm_temp ~ elevation_z + canopy_height_z + building_height_z,
+                     data = temp_shm.ex)
   summary_lm_z <- summary(reg_model_z)
   
-  # Compute residuals and predictions
-  pred <- predict(reg_model_z, temp_shm.ex)
-  resid <- temp_shm.ex$hm_temp - pred
+  # predictions & residuals for z-MLR (distinct names to avoid clobbering)
+  pred_z  <- predict(reg_model_z, temp_shm.ex)
+  resid_z <- temp_shm.ex$hm_temp - pred_z
   
-  # Extract metrics
+  # Model-level metrics for z-MLR
   model_metrics_z <- data.frame(
     timestamp      = ts,
     r_squared      = summary_lm_z$r.squared,
-    adj_r_squared  = summary_lm$adj.r.squared,
+    adj_r_squared  = summary_lm_z$adj.r.squared,
     f_statistic    = summary_lm_z$fstatistic[1],
     f_pvalue       = pf(summary_lm_z$fstatistic[1],
                         summary_lm_z$fstatistic[2],
                         summary_lm_z$fstatistic[3],
                         lower.tail = FALSE),
     residual_se    = summary_lm_z$sigma,
-    rmse           = sqrt(mean(resid^2)),
-    mae            = mean(abs(resid)),
-    AIC            = AIC(reg_model),
-    BIC            = BIC(reg_model)
+    rmse           = sqrt(mean(resid_z^2)),
+    mae            = mean(abs(resid_z)),
+    AIC            = AIC(reg_model_z),
+    BIC            = BIC(reg_model_z)
   )
   
   write.table(
@@ -432,6 +437,41 @@ for (i in seq_along(timestamps)) {
     col.names = !file.exists(metrics_file_z),
     append = TRUE
   )
+  
+  # ---- Your requested additions: robust SEs, β (unitless), relative importance ----
+  
+  # robust SEs (HC3) for safer p-values
+  rob <- coeftest(reg_model_z, vcov = vcovHC(reg_model_z, type = "HC3"))
+  
+  coef_df <- broom::tidy(rob) |>
+    dplyr::filter(term != "(Intercept)") |>
+    dplyr::transmute(
+      timestamp     = ts,
+      term,
+      estimate_semi = estimate,      # °C per 1 SD of predictor (since X are z)
+      se_robust     = std.error,
+      t_robust      = statistic,
+      p_robust      = p.value
+    )
+  
+  # unitless β for cross-time comparability
+  y_sd <- sd(temp_shm.ex$hm_temp, na.rm = TRUE)
+  coef_df$beta_std <- coef_df$estimate_semi / y_sd
+  
+  # relative importance (LMG): who explains most variance at this hour?
+  imp <- calc.relimp(reg_model_z, type = "lmg", rela = TRUE)
+  coef_df$lmg <- imp$lmg[match(coef_df$term, names(imp$lmg))]  # sums to 1 per timestamp
+  
+  # append to tidy CSV
+  write.table(
+    coef_df,
+    file = coef_file_z,
+    sep = ",",
+    row.names = FALSE,
+    col.names = !file.exists(coef_file_z),
+    append = TRUE
+  )
+
   # ------------------------------------------------
   # STEP 4: Fit GAM model and prepare spatial data
   # ------------------------------------------------
@@ -663,6 +703,129 @@ p_lm
 
 # Save plot (optional)
 #ggsave("../regression_tests/lm_metrics_rmse_mae_by_day_04_2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+```
+
+--------------------------------------------------------------------------------
+
+How well do the environmental covariates describe hourly mean temperature
+
+```{r}
+fit <- read.csv(metrics_file_z)
+ggplot(fit, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), adj_r_squared)) +
+  geom_line() + geom_point(size=1) +
+  labs(x="Zeitstempel", y="adj. R²", title="Modellgüte über die Zeit") +
+  theme_minimal(12)
+
+ggplot(coef_all, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), beta_std, color=term)) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  geom_line() + geom_point(size=0.9) +
+  labs(x="Zeitstempel", y="β (standardisiert)",
+       title="Einflussstärke der Kovariaten über die Zeit") +
+  theme_minimal(12)
+
+ggplot(coef_all, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), term, fill=beta_std)) +
+  geom_tile() +
+  scale_fill_gradient2(name="β") +
+  labs(x="Zeitstempel", y="Kovariate", title="Heatmap der standardisierten Effekte") +
+  theme_minimal(12)
+
+ggplot(coef_all, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), lmg, fill=term)) +
+  geom_area(position="fill") +
+  labs(x="Zeitstempel", y="Anteil an R² (LMG)",
+       title="Relative Wichtigkeit der Kovariaten (sum=1)") +
+  theme_minimal(12)
+```
+
+```{r}
+str(coef_all)
+```
+
+
+```{r}
+
+# Import z-normalized MLR regression model metrics
+coef_all <- read.csv(coef_file_z)
+
+# Convert timestamp column to proper datetime
+coef_all <- coef_all %>%
+  mutate(
+    timestamp = if_else(
+      nchar(timestamp) == 10,             # check if timestamp is 10 characters
+      paste0(timestamp, " 00:00:00"),     # add midnight time if 10 and not more
+      timestamp                                            
+    ),
+    timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin"),
+    date = as.Date(timestamp),
+    hour = hour(timestamp)
+  )
+
+# Check grouping structure
+# Make sure you have roughly 10 unique days and 24 hours per day
+length(unique(coef_all$date))
+
+
+# Plot daily variation of covariates importance
+ggplot(coef_all, aes(x = hour, y = lmg, fill = term)) +
+  geom_area(position = "fill", alpha = 0.9) +
+  facet_wrap(~ date, ncol = 2) +
+  scale_x_continuous(breaks = 0:23) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    x = "Hour of Day",
+    y = "Share of R² (LMG, Sum = 1)",
+    title = "Daily Variation of Covariate Importance (LMG)",
+    fill = "Covariate"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    panel.spacing = unit(1, "lines"),
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+
+```{r}
+coef_sig <- coef_all |>
+  dplyr::group_by(term) |>
+  dplyr::mutate(p_bh = p.adjust(p_robust, method="BH"),
+                sig  = p_bh < 0.05) |>
+  dplyr::ungroup()
+
+ggplot(coef_sig, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), term, fill=sig)) +
+  geom_tile() +
+  scale_fill_manual(values=c("TRUE"="black","FALSE"="grey85"), name="Signifikant (BH<0.05)") +
+  labs(x="Zeitstempel", y="Kovariate", title="Signifikanz über die Zeit") +
+  theme_minimal(12)
+
+ggplot(coef_sig, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), term, fill=beta_std)) +
+  geom_tile() +
+  geom_point(data=dplyr::filter(coef_sig, sig), shape=21, size=1.5, color="black") +
+  scale_fill_gradient2(name="β") +
+  labs(x="Zeitstempel", y="Kovariate",
+       title="Effektstärke (β) mit Signifikanz-Markern") +
+  theme_minimal(12)
+
+top_hours <- coef_sig |>
+  dplyr::group_by(term) |>
+  dplyr::slice_max(order_by=abs(beta_std), n=5, with_ties=FALSE) |>
+  dplyr::ungroup()
+
+ggplot(top_hours,
+       aes(x=reorder(format(as.POSIXct(timestamp, tz="Europe/Berlin"), "%d.%m %H:%M"),
+                     abs(beta_std)),
+           y=beta_std, color=sig)) +
+  geom_segment(aes(xend=..x.., y=0, yend=beta_std)) +
+  geom_point(size=2) +
+  facet_wrap(~term, scales="free_y") +
+  coord_flip() +
+  scale_color_manual(values=c("TRUE"="black","FALSE"="grey60"), name="BH<0.05") +
+  labs(x="Timestamp", y="β", title="Stärkste Zeitpunkte pro Kovariate") +
+  theme_minimal(12)
+
+
+
 ```
 
 
