@@ -718,19 +718,16 @@ Following plot can answer this research question:
 coef_all <- read.csv(coef_file_z)
 fit <- read.csv(metrics_file_z)
 
-# Format timestamps in both data frames
 fit <- fit %>%
   mutate(
     timestamp = if_else(
-      nchar(timestamp) == 10,
-      paste0(timestamp, " 00:00:00"),
-      timestamp
+      nchar(timestamp) == 10, paste0(timestamp, " 00:00:00"), timestamp
     ),
-    timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin"),
+    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
     month = month(timestamp),
-    year  = year(timestamp)
+    year = year(timestamp)
   ) %>%
-  filter(month == 7 & year == 2023)
+  filter(year == 2023, month == 7)
 
 coef_all <- coef_all %>%
   mutate(
@@ -758,33 +755,42 @@ if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Paginated plotting loop
 for (i in seq_len(n_pages)) {
-
-  p_cov <- ggplot(coef_all, aes(x = hour, fill = term)) +
-    geom_area(aes(y = lmg), position = "fill", alpha = 0.95) +
-    geom_line(aes(y = r_squared), color = "black", linewidth = 0.8) +
+  p_cov <- ggplot(coef_all, aes(x = hour)) +
+    geom_area(aes(y = lmg, fill = term), position = "fill", alpha = 0.95) +
+    geom_line(aes(y = r_squared, color = "Model R²"), linewidth = 0.6) +
     ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
     scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
     scale_y_continuous(
-      name = "Share of R² (LMG, Sum = 1)",
+      name = "Covariate Importance (LMG, % of R²)",
       labels = percent_format(accuracy = 1),
       sec.axis = sec_axis(~ ., name = "Model R²")
     ) +
     scale_fill_manual(
-      name = "Covariate",
+      name = "Covariates (z-standardised)",
       values = c(
-        "building_height_z" = "#E69F00",  # orange
-        "canopy_height_z"   = "#009E73",  # teal
-        "elevation_z"       = "#56B4E9"   # blue
+        "building_height_z" = "darkorange3",
+        "canopy_height_z"   = "darkolivegreen",
+        "elevation_z"       = "burlywood2"
       ),
       labels = c(
-        "building_height_z" = "Building height (z)",
-        "canopy_height_z"   = "Canopy height (z)",
-        "elevation_z"       = "Elevation (z)"
+        "building_height_z" = "Building Height",
+        "canopy_height_z"   = "Canopy Height",
+        "elevation_z"       = "Elevation"
       )
     ) +
+    scale_color_manual(
+      name = "",  # we'll merge this with the fill legend
+      values = c("Model R²" = "black"),
+      guide = guide_legend(override.aes = list(linetype = 1, fill = NA))
+    ) +
+    guides(
+      fill = guide_legend(order = 1),
+      color = guide_legend(order = 2)
+    ) +
     labs(
-      title    = sprintf("Daily Variation of Covariate Importance (Page %d/%d)", i, n_pages),
+      title    = sprintf("Daily Variation of Covariate Importance (%d/%d)", i, n_pages),
       subtitle = "Left axis: relative contribution of covariates (LMG, % of R²)\nRight axis: total model R² based on hourly MLR with z-standardized covariates",
+      caption = "LMG = Lindeman–Merenda–Gold relative importance measure",
       x = "Hour of Day",
       y = "Share of R² (LMG, Sum = 1)"
     ) +
@@ -808,6 +814,7 @@ for (i in seq_len(n_pages)) {
 }
 ```
 
+
 The figure illustrates how the relative influence of topography, vegetation, and urban structure on hourly mean temperature varies over the course of each day.
 
 Overall Canopy height has the smallest impact of the three covariates on the hourly mean temperature predictions. Across the entire day, elevation has the biggest impact with building height having a strong influence on hourly mean temperature during nighttime.
@@ -820,30 +827,47 @@ The following figure will answer this research questions:
 output_pval <- "../plots/figures_pvalues"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
+coef_all <- coef_all %>%
+  mutate(
+    p_category = case_when(
+      p_robust < 0.001 ~ "< 0.001",
+      p_robust < 0.01  ~ "< 0.01",
+      p_robust < 0.05  ~ "< 0.05",
+      TRUE             ~ "≥ 0.05 (n.s.)"
+    )
+  )
+
 # Loop over pages
 for (i in seq_len(n_pages)) {
 
-  p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_robust)) +
-    geom_tile(color = "grey80") +
+  p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_category)) +
+    geom_tile(color = "grey85") +
     ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
     scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
-    scale_fill_viridis_c(
-      option = "C", direction = -1,
-      limits = c(0, 0.05),
-      labels = label_number(accuracy = 0.01),
-      name = "p-value (robust)"
+    scale_fill_manual(
+    name = "Significance (robust p-value)",
+    values = c(
+      "< 0.001" = "#440154",       # dark purple
+      "< 0.01"  = "#31688e",       # blue
+      "< 0.05"  = "#35b779",       # green
+      "≥ 0.05 (n.s.)" = "grey85"   # light grey
+    ),
+    breaks = c("< 0.001", "< 0.01", "< 0.05", "≥ 0.05 (n.s.)")
     ) +
     labs(
       x = "Hour of Day",
       y = "Covariate",
       title = sprintf("Hourly Significance of Covariates (Page %d/%d)", i, n_pages),
-      subtitle = "Darker colors indicate higher significance (lower p-values)\nGrey cells: non-significant (p ≥ 0.05)"
+      subtitle = "Darker colors indicate higher significance (lower p-values)"
     ) +
     theme_minimal(base_size = 13) +
     theme(
       strip.text = element_text(face = "bold"),
       legend.position = "bottom",
       legend.title = element_text(face = "bold"),
+      legend.key.width = unit(2, "lines"),
+      legend.text = element_text(size = 11),
+      legend.box = "horizontal",
       panel.spacing = unit(0.8, "lines"),
       plot.title = element_text(face = "bold", size = 15, hjust = 0.5),
       plot.subtitle = element_text(size = 11, hjust = 0.5)
