@@ -827,6 +827,7 @@ The following figure will answer this research questions:
 output_pval <- "../plots/figures_pvalues"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
+# Categorize p-values before plotting
 coef_all <- coef_all %>%
   mutate(
     p_category = case_when(
