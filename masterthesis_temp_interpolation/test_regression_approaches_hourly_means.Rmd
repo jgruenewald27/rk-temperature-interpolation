@@ -710,7 +710,6 @@ p_lm
 How well do the environmental covariates describe hourly mean temperature
 
 ```{r}
-fit <- read.csv(metrics_file_z)
 ggplot(fit, aes(as.POSIXct(timestamp, tz="Europe/Berlin"), adj_r_squared)) +
   geom_line() + geom_point(size=1) +
   labs(x="Zeitstempel", y="adj. R²", title="Modellgüte über die Zeit") +
@@ -745,46 +744,84 @@ str(coef_all)
 
 # Import z-normalized MLR regression model metrics
 coef_all <- read.csv(coef_file_z)
+fit <- read.csv(metrics_file_z)
 
-# Convert timestamp column to proper datetime
+# sicherstellen, dass timestamp gleich formatiert ist wie in coef_all
+fit <- fit %>%
+  mutate(
+    timestamp = if_else(
+      nchar(timestamp) == 10,
+      paste0(timestamp, " 00:00:00"),
+      timestamp
+    ),
+    timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin")
+  )
+
 coef_all <- coef_all %>%
   mutate(
     timestamp = if_else(
-      nchar(timestamp) == 10,             # check if timestamp is 10 characters
-      paste0(timestamp, " 00:00:00"),     # add midnight time if 10 and not more
-      timestamp                                            
+      nchar(timestamp) == 10,
+      paste0(timestamp, " 00:00:00"),
+      timestamp
     ),
     timestamp = as.POSIXct(timestamp, tz = "Europe/Berlin"),
     date = as.Date(timestamp),
     hour = hour(timestamp)
-  )
+  ) %>%
+  left_join(fit %>% select(timestamp, r_squared), by = "timestamp")
+
 
 # Check grouping structure
 # Make sure you have roughly 10 unique days and 24 hours per day
-length(unique(coef_all$date))
+# length(unique(coef_all$date))
 
 
 # Plot daily variation of covariates importance
 ggplot(coef_all, aes(x = hour, y = lmg, fill = term)) +
-  geom_area(position = "fill", alpha = 0.9) +
+  geom_area(position = "fill", alpha = 0.95) +
+  geom_line(aes(y = r_squared), color = "black", linewidth = 0.8) +
   facet_wrap(~ date, ncol = 2) +
-  scale_x_continuous(breaks = 0:23) +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+
+  # left axis = share in %, right axis = R² (0–1)
+  scale_y_continuous(
+    name = "Share of R² (LMG, Sum = 1)",
+    labels = percent_format(accuracy = 1),
+    sec.axis = sec_axis(~ ., name = "Model R²")
+  ) +
+  scale_fill_manual(
+    name = "Covariate",
+    values = c(
+      "building_height_z" = "#E69F00",  # orange
+      "canopy_height_z"   = "#009E73",  # teal
+      "elevation_z"       = "#56B4E9"   # blue
+    ),
+    labels = c(
+      "building_height_z" = "Building height (z)",
+      "canopy_height_z"   = "Canopy height (z)",
+      "elevation_z"       = "Elevation (z)"
+    )
+  ) +
   labs(
     x = "Hour of Day",
     y = "Share of R² (LMG, Sum = 1)",
-    title = "Daily Variation of Covariate Importance (LMG)",
-    fill = "Covariate"
+    title = "Daily Variation of Covariate Importance",
+    subtitle = "z-standardized covariates within each hour across all stations\nRelative contribution of static environmental covariates to hourly mean temperature prediction"
   ) +
-  theme_minimal(base_size = 13) +
+  theme_minimal(base_size = 14) +
   theme(
     legend.position = "bottom",
-    panel.spacing = unit(1, "lines"),
-    strip.text = element_text(face = "bold")
+    legend.title = element_text(face = "bold"),
+    legend.key.width = unit(2, "lines"),
+    strip.text = element_text(face = "bold", size = 12),
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5)
   )
-
 ```
 
+The figure illustrates how the relative influence of topography, vegetation, and urban structure on hourly mean temperature varies over the course of each day.
+
+Overall Canopy height has the smallest impact of the three covariates on the hourly mean temperature predictions. Across the entire day, elevation has the biggest impact with building height having a strong influence on hourly mean temperature during nighttime.
 
 ```{r}
 coef_sig <- coef_all |>
