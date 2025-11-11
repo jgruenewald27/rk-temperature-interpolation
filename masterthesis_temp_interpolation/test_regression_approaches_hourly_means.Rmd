@@ -185,7 +185,7 @@ grids_sp@data
 
 ```{r create_output_folder}
 
-output_dir <- "../regression_tests"
+output_dir <- "../regression_test_residuals"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Define subdirectories for specific output types
@@ -250,7 +250,6 @@ for (m in names(index_by_month)) {
 
 ```{r Main loop}
 
-
 # Set timestamps and analysis period
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
 start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
@@ -268,6 +267,7 @@ cat(sprintf("Processing %d timestamps…\n", total))
 # Init empty containers
 total_metrics <- data.frame()
 all_temp_data <- data.frame()
+mlr_residuals_all <- data.frame()
 
 # Main loop over timestamps
 for (i in seq_along(timestamps)) {
@@ -370,6 +370,26 @@ for (i in seq_along(timestamps)) {
   pred <- predict(reg_model, temp_shm.ex)
   resid <- temp_shm.ex$hm_temp - pred
   
+  # Extract per-timestamp residuals
+  mlr_residuals_df <- temp_shm.ex %>%
+    dplyr::transmute(
+      timestamp   = ts,
+      entity_id   = entity_id,      # station id; adjust if your column is named differently
+      hm_temp_obs = hm_temp,        # observed temperature
+      hm_temp_pred = pred,          # predicted by regular MLR
+      residual    = resid,          # obs - pred
+      elevation   = elevation,
+      canopy_height = canopy_height,
+      building_height = building_height
+    )
+  
+  # Accumulate
+  if (!exists("mlr_residuals_all") || nrow(mlr_residuals_all) == 0) {
+    mlr_residuals_all <- mlr_residuals_df
+  } else {
+    mlr_residuals_all <- dplyr::bind_rows(mlr_residuals_all, mlr_residuals_df)
+  }
+    
   # Extract metrics
   model_metrics <- data.frame(
     timestamp      = ts,
@@ -547,13 +567,12 @@ close(pb)
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
             completed, total, skipped))                         
 
-# # Save all LM metrics to a single CSV file
-# metrics_file <- file.path(lm_dir, "lm_model_performance_summary.csv")
-# if (exists("lm_metrics_all")) {                                     
-#   lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
-#   lm_metrics_all <- lm_metrics_all %>% relocate(datetime_local, .after = timestamp)  
-#   write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
-# }
+mlr_residuals_file <- file.path(output_dir, "mlr_residuals_all.csv")
+if (exists("mlr_residuals_all") && nrow(mlr_residuals_all) > 0) {
+  mlr_residuals_all$datetime_local <- ts_to_posix(mlr_residuals_all$timestamp)
+  mlr_residuals_all <- dplyr::relocate(mlr_residuals_all, datetime_local, .after = timestamp)
+  write.csv(mlr_residuals_all, mlr_residuals_file, row.names = FALSE)
+}
 ```
 
 --------------------------------------------------------------------------------
