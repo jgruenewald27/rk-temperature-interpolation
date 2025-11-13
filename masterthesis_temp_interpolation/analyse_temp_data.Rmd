@@ -51,7 +51,7 @@ library(tmap)
 ```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
 
 # Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
 
 # Removes rows where temp is NA
 temp <- temp %>% filter(!is.na(temperature))
@@ -210,6 +210,24 @@ temp_clean_station <- temp_clean %>%
 # Check if exactly 4 stations were dropped
 length(unique(na.omit(temp_clean$entity_id)))
 length(unique(na.omit(temp_clean_station$entity_id)))
+```
+
+```{r}
+temp_clean_station_dm <- temp_clean_station %>%
+  group_by(entity_id, dateobserved) %>%                       # <- daily grouping
+  summarise(dm_temp = mean(temperature, na.rm = TRUE),
+            .groups = "drop")
+```
+
+```{r}
+temp_clean_station_dm %>%
+  filter(dateobserved == as.Date("2023-07-09")) %>%
+  summarise(
+    min_temp = min(dm_temp, na.rm = TRUE),
+    max_temp = max(dm_temp, na.rm = TRUE),
+    range_deg = max_temp - min_temp
+  )
+
 ```
 
 --------------------------------------------------------------------------------
