@@ -814,7 +814,7 @@ Areas show the proportional contribution of each covariate to the total model RÂ
       plot.subtitle    = element_text(size = 12, hjust = 0.5)
     ) +
     theme(
-      plot.caption.position = "plot",   # places caption in bottom-right corner
+      plot.caption.position = "plot", 
       plot.caption = element_text(hjust = 0, margin = margin(t = 20))
     ) +
     theme(
@@ -831,12 +831,6 @@ Areas show the proportional contribution of each covariate to the total model RÂ
   )
 }
 ```
-
-```{r}
-str(coef_all$date)
-levels(coef_all$date)
-```
-
 
 The figure illustrates how the relative influence of topography, vegetation, and urban structure on hourly mean temperature varies over the course of each day.
 
