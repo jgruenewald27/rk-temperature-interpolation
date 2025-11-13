@@ -448,25 +448,54 @@ station_long <- station_df %>%
   pivot_longer(cols = c(elevation, canopy_height, building_height),
                names_to = "covariate", values_to = "value")
 
+# 2. Compute Pearson correlation per covariate
+cors <- station_long %>%
+  group_by(covariate) %>%
+  summarise(
+    r = cor(value, mean_temp, method = "pearson", use = "pairwise.complete.obs")
+  ) %>%
+  mutate(
+    label = sprintf("italic(r) == %.2f", r)   # format for plotmath
+  )
+
 p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  #geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), color = "blue", linetype = "dashed")
   facet_wrap(~ covariate, scales = "free_x", nrow = 1,
              labeller = labeller(
                covariate = c(elevation = "Elevation [m]",
                              canopy_height = "Canopy Height [m]",
                              building_height = "Building Height [m]")
              )) +
+  geom_text(
+    data = cors,
+    aes(label = label),
+    x = -Inf, y = Inf,
+    hjust = -0.2, vjust = 2,
+    parse = TRUE,
+    size = 5,
+    fontface = "bold",
+    inherit.aes = FALSE
+  ) +
   scale_y_continuous(limits = c(9, 15)) +
-  labs(title = "Yearly Mean Temperature per Station vs Environmental Covariates",
-       x = NULL, y = "Mean Temperature [°C]") +
+  scale_x_continuous(expand = expansion(mult = c(0.02, 0.02))) +
+  labs(title = "Linear Relationships Between Yearly Mean Temperature and Environmental Covariates",
+       x = NULL, y = "Yearly Mean Temperature [°C]") +
   theme_bw() +
-  theme(strip.text = element_text(face = "bold"))
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    plot.title = element_text(
+        face = "bold", size = 20, hjust = 0.5,
+        margin = margin(t = 10, b = 10)),
+    axis.title.y = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
 
 p_corr_temp_cov
 
 # Save output to file
-# ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 4, dpi = 300)
+ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 6, dpi = 300)
 ```
 
 ------------------------------------------------------------------------
@@ -540,8 +569,59 @@ mlr_coll <- lm(hm_temp ~ elevation + canopy_height + building_height, data = tem
 
 mlr_coll
 
-#calculate the VIF for each predictor variable in the model
-vif(mlr_coll)
+vif_df <- car::vif(mlr_coll) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("covariate") %>%
+  rename(VIF = 2)
+
+vif_df   # check VIF table
+
+# --- Plot VIF values ---
+p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
+  geom_col(color = "grey30", linewidth = 0.3) +
+  scale_fill_manual(
+    values = c(
+      "building_height" = "darkorange3",
+      "canopy_height"   = "darkolivegreen",
+      "elevation"       = "burlywood2"
+    ),
+    guide = "none"
+  ) +
+  scale_x_discrete(
+    labels = c(
+      "building_height" = "Building Height",
+      "canopy_height"   = "Canopy Height",
+      "elevation"       = "Elevation"
+    )
+  ) +
+  geom_hline(yintercept = 5,  linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 0.5, y = 5.2,
+         label = "VIF > 5 high multicollinearity",
+         hjust = 0, size = 4, color = "grey40") +
+  geom_text(aes(label = round(VIF, 2)),
+          vjust = -0.5, size = 5) +
+  labs(
+    title = "Variance Inflation Factors (VIF) for Model Covariates",
+    caption = "Values assess multicollinearity among predictors",
+    x = "Covariate",
+    y = "VIF"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "grey40"),
+    plot.caption.position = "plot",
+    plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85")
+  )
+
+p_vif
+
+# Save output to file
+ggsave("../plots/multicollinearity.png", p_vif, width = 8, height = 5, dpi = 300)
 ```
 
 None of the predictors (elevation, canopy height, building height) show problematic multicollinearity. All VIFs are under 5, suggesting the model is stable with respect to predictor relationships.
