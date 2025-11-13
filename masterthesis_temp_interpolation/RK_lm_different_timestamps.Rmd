@@ -38,6 +38,7 @@ library(ggforce)
 library(scales)
 library(gridExtra)
 library(corrplot)
+library(viridis)
 
 # Mapping & Interactive Visualization
 library(tmap)
@@ -185,7 +186,7 @@ grids_sp@data
 ```{r Create output folder}
 
 # Create output dirs
-output_dir <- "../rk_results_07-2023"
+output_dir <- "../RK_07_2023_12days"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 variogram_dir <- file.path(output_dir, "variogram")
@@ -216,7 +217,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 # Set timestamps and analysis period
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
 start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-01 03:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-12 23:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
 cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
 
@@ -426,6 +427,60 @@ for (i in seq_along(timestamps)) {
   
   ggsave(filename = file.path(cv_dir, paste0(dt_file, "_cv_residuals_plot.png")),  
          plot = p_cv, width = 8, height = 6, dpi = 300)
+  
+  # ------------------------------------------------
+  # STEP 5: LOOCV for full Regression Kriging
+  # ------------------------------------------------
+
+  cv_rk <- krige.cv(
+    formula   = hm_temp ~ elevation + canopy_height + building_height,
+    locations = temp_shm.sf,
+    model     = rvgm.temp,                 # variogram of residuals
+    nfold     = nrow(temp_shm.sf),         # LOOCV
+    nmax      = 10
+  )
+
+  # krige.cv returns: observed, var1.pred, residual (= observed - predicted)
+
+  rk_cv_rmse <- sqrt(mean(cv_rk$residual^2))
+  rk_cv_mae  <- mean(abs(cv_rk$residual))
+  rk_cv_bias <- mean(cv_rk$residual)
+
+  cat("RK LOOCV RMSE:", round(rk_cv_rmse, 2),
+      "MAE:", round(rk_cv_mae, 2),
+      "Bias:", round(rk_cv_bias, 2), "\n")
+
+  # Store RK CV results
+  rk_cv_metrics <- data.frame(
+    timestamp   = ts,
+    rk_cv_rmse  = rk_cv_rmse,
+    rk_cv_mae   = rk_cv_mae,
+    rk_cv_bias  = rk_cv_bias
+  )
+
+  if (!exists("rk_cv_metrics_all")) {
+    rk_cv_metrics_all <- rk_cv_metrics
+  } else {
+    rk_cv_metrics_all <- rbind(rk_cv_metrics_all, rk_cv_metrics)
+  }
+
+  # Plot RK CV residuals
+  p_rk_cv <- ggplot(cv_rk, aes(x = var1.pred, y = residual)) +
+    geom_point() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+      title = paste("RK LOOCV Residuals\n", dt_lab),
+      x     = "RK predicted (°C)",
+      y     = "Residual (Observed - Predicted)"
+    ) +
+    theme_minimal(base_size = 12)
+
+  ggsave(
+    filename = file.path(cv_dir, paste0(dt_file, "_rk_loocv_residuals_plot.png")),
+    plot     = p_rk_cv,
+    width    = 8, height = 6, dpi = 300
+  )
+
 
   # ------------------------------------------------
   # STEP 6: Regression Kriging prediction
@@ -544,6 +599,15 @@ if (exists("cv_metrics_all")) {
   write.csv(cv_metrics_all, cv_file, row.names = FALSE)
 }
 
+# Save RK LOOCV metrics
+rk_cv_file <- file.path(output_dir, "rk_loocv_metrics.csv")
+if (exists("rk_cv_metrics_all")) {
+  rk_cv_metrics_all$datetime_local <- ts_to_posix(rk_cv_metrics_all$timestamp)
+  rk_cv_metrics_all <- rk_cv_metrics_all %>%
+    relocate(datetime_local, .after = timestamp)
+  write.csv(rk_cv_metrics_all, rk_cv_file, row.names = FALSE)
+}
+
 # Save RK metrics
 rk_file <- file.path(output_dir, "rk_metrics.csv")
 if (exists("rk_metrics_all")) {                                   
@@ -630,19 +694,25 @@ for (i in seq_len(n_pages)) {
 ```{r Analyse CV metrics}
 
 # Read cv metrics
-cv_metrics <- read.csv("../rk_results_07-2023/cross_validation_metrics.csv",
+cv_metrics <- read.csv("../RK_07_2023_12days/rk_loocv_metrics.csv",
                        stringsAsFactors = FALSE)
 
 cv_metrics <- cv_metrics %>%
   mutate(
-    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = lubridate::hour(datetime_calc)
-  )
+    timestamp = if_else(
+      nchar(timestamp) == 10, paste0(timestamp, " 00:00:00"), timestamp
+    ),
+    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    date = as.Date(format(timestamp, tz = "Europe/Berlin")),
+    hour  = hour(timestamp),
+    month = month(timestamp),
+    year  = year(timestamp)
+  ) %>%
+  filter(year == 2023, month == 7)
 
 # Reshape to long format
 cv_metrics_long <- cv_metrics %>%
-  pivot_longer(cols = c(cv_rmse, cv_mae),
+  pivot_longer(cols = c(rk_cv_rmse, rk_cv_mae),
                names_to = "metric",
                values_to = "value")
 
@@ -665,12 +735,12 @@ for (i in seq_len(n_pages)) {
     ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed", page = i) +  # 12 days per plot
     scale_color_manual(
       values = c(
-        "cv_rmse" = "#6699CC",
-        "cv_mae"  = "#CC6677"
+        "rk_cv_rmse" = "#6699CC",
+        "rk_cv_mae"  = "#CC6677"
       ),
       labels = c(
-        "cv_rmse" = "Root Mean Square Error (RMSE)",
-        "cv_mae"  = "Mean Absolute Error (MAE)"
+        "rk_cv_rmse" = "Root Mean Square Error (RMSE)",
+        "rk_cv_mae"  = "Mean Absolute Error (MAE)"
       )
     ) +
     scale_linetype_manual(
@@ -678,7 +748,7 @@ for (i in seq_len(n_pages)) {
       values = c("Perfect Prediction (Error = 0)" = "dotted")
     ) +
     labs(
-      title    = sprintf("Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics (Page %d/%d)", i, n_pages),
+      title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
       subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
       x        = "Hour of the Day",
       y        = "Error Metric [°C]",
@@ -1185,9 +1255,9 @@ p_resid_hist
 p_resid_map
 
 # Save as PNG
-ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
+# ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
 
-ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
+# ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
 ```
 
 ```{r Robust Performance Metrics and Regression Fit}
@@ -1324,7 +1394,7 @@ p_landcover_corr <- ggplot(cor_summary, aes(
 p_landcover_corr
 
 # Save as PNG
-ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+# ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
