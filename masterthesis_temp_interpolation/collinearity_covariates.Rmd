@@ -553,7 +553,7 @@ Spatial Autocorrelation of MLR model residuals
 ```{r Loop to calculate Morans I on regression residuals}
 # Import residuals
 mlr_residuals <- read.csv(
-  "../regression_test_residuals/mlr_residuals_all.csv",
+  "../MLR_07_2023_12days/mlr_residuals_all.csv",
   stringsAsFactors = FALSE
 )
 
@@ -586,8 +586,10 @@ mlr_residuals_sf <- st_as_sf(
 
 # Loop across days using the sf version
 month_start <- as.Date("2023-07-01")
-month_end   <- as.Date("2023-07-31")
+month_end   <- as.Date("2023-07-12")
 all_days    <- seq(month_start, month_end, by = "day")
+
+moran_summary_list <- list()
 
 for (one_day in all_days) {
   message("Processing ", one_day)
@@ -624,6 +626,16 @@ for (one_day in all_days) {
       )
     })
   
+  moran_results_clean <- moran_results %>%
+  mutate(
+    date = as.Date(hour, tz = "Europe/Berlin"),
+    hour = lubridate::hour(hour),
+    moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
+  ) %>%
+  select(date, hour, moran_i, p_mc, moran_sig)
+
+  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
+
   # Convert one_day to proper Date for plotting and filenames
   day_label <- as.Date(one_day, origin = "1970-01-01")
   
@@ -686,6 +698,8 @@ for (one_day in all_days) {
   out_file <- file.path("../plots/moransI_residuals", paste0("moransI_residuals_", one_day, ".png"))
   ggsave(out_file, p_moran, width = 8, height = 5, dpi = 300)
 }
+
+moran_summary <- dplyr::bind_rows(moran_summary_list)
 ```
 
 ------------------------------------------------------------------------
