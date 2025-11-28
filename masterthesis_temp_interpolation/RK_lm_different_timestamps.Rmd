@@ -1087,6 +1087,7 @@ ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
   theme_minimal(base_size = 14) +
   labs(
     title = "RK LOOCV RMSE vs Other Weather Variables Captured by the Weather Stations",
+    subtitle = "Timespan: 2023-07-01 00:00:00 until 2023-07-12 23:00:00",
     x = "Weather Variable Value",
     y = "RMSE [°C]"
   )
@@ -1108,6 +1109,7 @@ ggplot(df_long, aes(
   theme_minimal(base_size = 14) +
   labs(
     title = "Hourly Weather Conditions with RK LOOCV RMSE Indicated",
+    subtitle = "Timespan: 2023-07-01 00:00:00 until 2023-07-12 23:00:00",
     x = "Hour of the Day",
     y = "Weather Variable Value",
     color = "RMSE [°C]",
@@ -1318,13 +1320,13 @@ p_ref_map <- ggplot() +
   geom_raster(data = ref_df, aes(x = x, y = y, fill = value)) +
   geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
-  scale_fill_viridis_c(name = "Temperature [°C]", limits = rng) +
+  scale_fill_viridis_c(name = "PET [°C]", limits = rng) +
   coord_sf() +
   annotation_scale(location = "br", width_hint = 0.3) +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(title = "Reference model",
-       subtitle = sprintf("Temperature value range: %.1f – %.1f °C", 
+  labs(title = "Urban Climate Analysis Heidelberg",
+       subtitle = sprintf("PET value range: %.1f – %.1f °C", 
                           min(ref_df$value, na.rm = TRUE), max(ref_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
@@ -1347,7 +1349,7 @@ p_rk_ref <- (p_rk_map + p_ref_map +
   )
 
 # Display combined plot
-p_rk_ref
+p_ref_map
 
 # Save as PNG
 ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
@@ -1389,7 +1391,7 @@ p_resid_hist <- ggplot(data.frame(resid), aes(x = resid)) +
   geom_histogram(bins = 60, fill = "steelblue", color = "white", alpha = 0.8) +
   geom_vline(xintercept = 0, color = "black", linetype = "dashed", linewidth = 0.6) +
   labs(
-    title = "Residual Distribution (RK Model – Reference, 09-07-2023 14:00)",
+    title = "Residual Distribution (RK Model − Urban Climate Analysis HD, 09-07-2023 14:00)",
     subtitle = sprintf("Mean bias = %.2f °C", mean(resid)),
     x = "Residual (Model − Reference) [°C]",
     y = "Number of cells"
@@ -1435,7 +1437,7 @@ p_resid_map <- ggplot() +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
   labs(
-    title = "Spatial Distribution of Residuals (Model − Reference) on 09-07-2023 at 14:00 [°C]",
+    title = "Spatial Distribution of Residuals (RK Model − Urban Climate Analysis HD) on 09-07-2023 at 14:00 [°C]",
     subtitle = "Blue: Model colder than reference | Red: Model warmer than reference"
   ) +
   theme_minimal(base_size = 13) +
@@ -1455,9 +1457,9 @@ p_resid_hist
 p_resid_map
 
 # Save as PNG
-# ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
+ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
 
-# ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
+ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
 ```
 
 ```{r Robust Performance Metrics and Regression Fit}
@@ -1575,7 +1577,7 @@ p_landcover_corr <- ggplot(cor_summary, aes(
   geom_hline(yintercept = 0, color = "grey50", linetype = "dashed") + 
   labs(
     title = "Temperature Correlation by Land Cover Class (09 July 2023, 14:00)",
-    subtitle = "Pearson’s r between RK model and reference temperatures",
+    subtitle = "Pearson’s r between RK model in °C and reference PET",
     caption = "Data: RK model output, Urban Climate Analysis Heidelberg (2023),\nUrban Atlas Land Cover/Land Use (2018), Europe, 6-yearly",
     x = NULL,
     y = "Pearson Correlation (r)"
@@ -1594,7 +1596,7 @@ p_landcover_corr <- ggplot(cor_summary, aes(
 p_landcover_corr
 
 # Save as PNG
-# ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
