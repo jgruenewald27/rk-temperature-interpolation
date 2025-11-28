@@ -77,6 +77,7 @@ temp_clean_station <- temp_clean %>%
      "hd:DE_Heidelberg_69120_12:WeatherObserved",
      "hd:DE_Heidelberg_69120_34:WeatherObserved",
      "hd:DE_Heidelberg_69123_41:WeatherObserved",
+     "hd:DE_Gaiberg_69251_21:WeatherObserved",
      "hd:DE_Heidelberg_46:WeatherObserved"
    ))
 
