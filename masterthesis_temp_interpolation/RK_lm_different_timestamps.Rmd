@@ -626,7 +626,9 @@ if (exists("rk_metrics_all")) {
 
 --------------------------------------------------------------------------------
 
-Plots to analyse model performance metrices for entire month
+Plots to analyse model performance metrics for entire month
+-> Likely not in report as plots might be too crowded. Maybe something for the
+Appendix if they contain some additional input.
 
 ```{r Analyse LM metrics}
 
@@ -1043,48 +1045,45 @@ df_hourly_means <- df_env %>%
   )
 ```
 
+Join LOOCV Metrics onto weather variables
 
 ```{r}
-
-# Add mean temperature across all weather stations for each hour
-df_hourly_mean <- temp_clean_station_hm %>%
-  
-  # Filter to July 1 to July 12
-  filter(
-    hour >= ymd_hms("2023-07-01 00:00:00", tz = "Europe/Berlin"),
-    hour <= ymd_hms("2023-07-12 23:00:00", tz = "Europe/Berlin")
-  ) %>%
-  
-  # Calculate hourly mean temperature across stations
-  group_by(hour) %>%
-  summarise(
-    temp_mean = mean(hm_temp, na.rm = TRUE),
-    n_stations = n_distinct(entity_id),
-    .groups = "drop"
-  )
-
-str(df_hourly_mean)
-
-df_hourly_temp <- df_hourly_mean %>%
+cv_metrics_join <- cv_metrics %>%
   mutate(
-    date = as.Date(hour),
-    hour_num = lubridate::hour(hour)
-  )
-
-temp_min <- min(df_hourly_temp$temp_mean, na.rm = TRUE)
-temp_max <- max(df_hourly_temp$temp_mean, na.rm = TRUE)
-
-# We want to map temp range onto error range (0–3.5)
-error_min <- 0
-error_max <- 3.5
-
-df_hourly_temp <- df_hourly_temp %>%
-  mutate(
-    temp_scaled = scales::rescale(
-      temp_mean,
-      to   = c(error_min, error_max),
-      from = c(temp_min, temp_max)
+    hour_ts = as.POSIXct(
+      paste(date, hour),
+      format = "%Y-%m-%d %H",
+      tz = "UTC"
     )
+  )
+
+cv_weather_combined <- cv_metrics_join %>%
+  left_join(
+    df_hourly_means,
+    by = c("hour_ts" = "hour")
+  )
+
+```
+
+```{r}
+weather_vars <- c(
+  "temperature_mean", "relativehumidity_mean", "dewpoint_mean",
+  "windspeed_mean", "solarradiation_mean",
+  "precipitation_mean", "pressure_mean"
+)
+
+df_long <- cv_weather_combined %>%
+  pivot_longer(cols = all_of(weather_vars), names_to = "variable", values_to = "value")
+
+ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
+  facet_wrap(~ variable, scales = "free_x") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "RK LOOCV RMSE vs Other Weather Variables Captured by the Weather Stations",
+    x = "Weather Variable Value",
+    y = "RMSE [°C]"
   )
 
 ```
