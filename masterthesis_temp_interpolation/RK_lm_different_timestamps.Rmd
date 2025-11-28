@@ -997,9 +997,7 @@ p_rk
 
 --------------------------------------------------------------------------------
 
-Impact of weather conditions on model performance
-
-```{r}
+```{r Impact of weather conditions on model performance}
 
 # Prep weather condition data
 weather_df <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
@@ -1014,21 +1012,24 @@ weather_df <- weather_df %>%
     "hd:DE_Heidelberg_46:WeatherObserved"
   ))
 
+# Create a subset for the relevant timestamps
 weather_df_subset <- weather_df %>%
   mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
-  # Filter to July 1 to July 12
   filter(
       dateobserved >= ymd_hms("2023-07-01 00:00:00", tz = "Europe/Berlin"),
       dateobserved <= ymd_hms("2023-07-12 23:00:00", tz = "Europe/Berlin")
   )  %>%
   select(-stationname, -description, -location, -path, -layer)
 
+# Drop geometry as this is not relevant for this analysis
 df_env <- weather_df_subset %>% 
   st_drop_geometry()
 
+# Floor values to closest hour before calculating hourly mean
 df_env <- df_env %>%
   mutate(hour = floor_date(dateobserved, "hour"))
 
+# Calculating hourly means of weather variables
 df_hourly_means <- df_env %>%
   group_by(hour) %>%
   summarise(
@@ -1045,9 +1046,9 @@ df_hourly_means <- df_env %>%
   )
 ```
 
-Join LOOCV Metrics onto weather variables
+```{r Join LOOCV Metrics onto weather variables}
 
-```{r}
+# Create column for join
 cv_metrics_join <- cv_metrics %>%
   mutate(
     hour_ts = as.POSIXct(
@@ -1057,15 +1058,15 @@ cv_metrics_join <- cv_metrics %>%
     )
   )
 
+# Join RMSE info and weather variables using timestamp
 cv_weather_combined <- cv_metrics_join %>%
   left_join(
     df_hourly_means,
     by = c("hour_ts" = "hour")
   )
-
 ```
 
-```{r}
+```{r Plot RMSE against weather}
 
 # Selecting mean weather variables relevant for plotting
 weather_vars <- c(
@@ -1091,7 +1092,7 @@ ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
   )
 ```
 
-```{r}
+```{r Plot RMSE against weather and time}
 
 # Add plot showing diurnal pattern of weather variables with the RK LOOCV RMSE also added
 # Size of RMSE shows its quantity
@@ -1113,7 +1114,6 @@ ggplot(df_long, aes(
     size  = "RMSE [°C]"
   )
 ```
-
 
 ```{r}
 p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
