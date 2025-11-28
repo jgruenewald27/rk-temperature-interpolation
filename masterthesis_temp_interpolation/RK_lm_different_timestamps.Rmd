@@ -20,6 +20,7 @@ library(terra)
 library(raster)
 library(stars)
 library(spdep)
+library(dplyr)
 
 # Spatial Analysis & Interpolation
 library(gstat)
@@ -72,7 +73,7 @@ temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
 
 # Drop all measurement stations which didn't collect data the entire year around
 temp_clean_station <- temp_clean %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
   filter(!entity_id %in% c(
     "hd:DE_Heidelberg_69120_12:WeatherObserved",
     "hd:DE_Heidelberg_69120_34:WeatherObserved",
@@ -101,6 +102,12 @@ temp_clean_station_hm <- temp_clean_station %>%
 temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+
+# Drop Gaiberg station as it is outside of AOI
+temp_clean_station_hm <- temp_clean_station_hm %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Gaiberg_69251_21:WeatherObserved"
+  ))
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
@@ -389,7 +396,7 @@ for (i in seq_along(timestamps)) {
   dev.off()
   
   # ------------------------------------------------
-  # STEP 5: Cross-validation of variogram model
+  # STEP 5a: Cross-validation of variogram model
   # ------------------------------------------------
 
   cv_resid <- krige.cv(residuals ~ 1,
@@ -429,7 +436,7 @@ for (i in seq_along(timestamps)) {
          plot = p_cv, width = 8, height = 6, dpi = 300)
   
   # ------------------------------------------------
-  # STEP 5: LOOCV for full Regression Kriging
+  # STEP 5b: LOOCV for full Regression Kriging
   # ------------------------------------------------
 
   cv_rk <- krige.cv(
@@ -898,41 +905,50 @@ p_lm
 
 # Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
 p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-  geom_line(linewidth = 1.2) +
-  geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
-  geom_point(size = 1.8) +
-  facet_wrap(~ date, ncol = 3, scales = "fixed") +   # gleiche y-Achse
-  scale_color_manual(
-    values = c(
-      "cv_rmse" = "#6699CC",
-      "cv_mae"  = "#CC6677"
-    ),
-    labels = c("cv_rmse" = "Root Mean Square Error (RMSE)",
-      "cv_mae"  = "Mean Absolute Error (MAE)"
+    geom_line(linewidth = 1.2) +
+    geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
+    geom_point(size = 1.8) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +  
+    scale_color_manual(
+      values = c(
+        "rk_cv_rmse" = "#6699CC",
+        "rk_cv_mae"  = "#CC6677"
+      ),
+      labels = c(
+        "rk_cv_rmse" = "Root Mean Square Error (RMSE)",
+        "rk_cv_mae"  = "Mean Absolute Error (MAE)"
+      )
+    ) +
+    scale_linetype_manual(
+      name = "",
+      values = c("Perfect Prediction (Error = 0)" = "dotted")
+    ) +
+    labs(
+      title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
+      subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
+      x        = "Hour of the Day",
+      y        = "Error Metric [°C]",
+      color    = "Metrics"
+    ) +
+    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "top",
+      legend.box       = "horizontal",
+      panel.grid.minor = element_blank(),
+      panel.spacing    = unit(0.8, "lines"),
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text       = element_text(face = "bold")
     )
-  ) +
-  scale_linetype_manual(name   = "", values = c("Perfect Prediction (Error = 0)" = "dotted")) +
-  labs(
-    title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
-    subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
-    x        = "Hour of the Day",
-    y        = "Error Metric [°C]",
-    color    = "Metrics"
-  ) +
-  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position   = "top",
-    panel.grid.minor  = element_blank(),
-    strip.background  = element_rect(fill = "grey90", color = NA),
-    strip.text        = element_text(face = "bold")
-  )
 
-# Show the plot
 p_cv
 
-# Save the plot
-#ggsave("../plots/cv_metrics_by_day_01-01-2023.png", plot = p_cv, width = 12, height = 8, dpi = 300)
+# Save plot to output directory
+# ggsave(
+#   filename = file.path(output_dir, "cv_metrics_07_2023_by_day_page.png"),
+#   plot = p_cv,
+#   width = 12, height = 8, dpi = 300
+# )
 ```
 
 ```{r Analyse RK metrics less 13}
@@ -976,6 +992,164 @@ p_rk
 # Save plot
 # ggsave("../plots/rk_metrics_week-01-2023.png", plot = p_rk, width = 12, height = 8, dpi = 300)
 ```
+
+--------------------------------------------------------------------------------
+
+Impact of weather conditions on model performance
+
+```{r}
+
+# Prep weather condition data
+weather_df <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+
+# Drop all measurement stations which didn't collect data the entire year around
+weather_df <- weather_df %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+weather_df_subset <- weather_df %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
+  # Filter to July 1 to July 12
+  filter(
+      dateobserved >= ymd_hms("2023-07-01 00:00:00", tz = "Europe/Berlin"),
+      dateobserved <= ymd_hms("2023-07-12 23:00:00", tz = "Europe/Berlin")
+  )  %>%
+  select(-stationname, -description, -location, -path, -layer)
+
+df_env <- weather_df_subset %>% 
+  st_drop_geometry()
+
+df_env <- df_env %>%
+  mutate(hour = floor_date(dateobserved, "hour"))
+
+df_hourly_means <- df_env %>%
+  group_by(hour) %>%
+  summarise(
+    temperature_mean       = mean(temperature, na.rm = TRUE),
+    relativehumidity_mean  = mean(relativehumidity, na.rm = TRUE),
+    dewpoint_mean          = mean(dewpoint, na.rm = TRUE),
+    pressure_mean          = mean(atmosphericpressure, na.rm = TRUE),
+    solarradiation_mean    = mean(solarradiation, na.rm = TRUE),
+    precipitation_mean     = mean(precipitation, na.rm = TRUE),
+    windspeed_mean         = mean(windspeed, na.rm = TRUE),
+    
+    n_stations = n_distinct(entity_id),
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+
+# Add mean temperature across all weather stations for each hour
+df_hourly_mean <- temp_clean_station_hm %>%
+  
+  # Filter to July 1 to July 12
+  filter(
+    hour >= ymd_hms("2023-07-01 00:00:00", tz = "Europe/Berlin"),
+    hour <= ymd_hms("2023-07-12 23:00:00", tz = "Europe/Berlin")
+  ) %>%
+  
+  # Calculate hourly mean temperature across stations
+  group_by(hour) %>%
+  summarise(
+    temp_mean = mean(hm_temp, na.rm = TRUE),
+    n_stations = n_distinct(entity_id),
+    .groups = "drop"
+  )
+
+str(df_hourly_mean)
+
+df_hourly_temp <- df_hourly_mean %>%
+  mutate(
+    date = as.Date(hour),
+    hour_num = lubridate::hour(hour)
+  )
+
+temp_min <- min(df_hourly_temp$temp_mean, na.rm = TRUE)
+temp_max <- max(df_hourly_temp$temp_mean, na.rm = TRUE)
+
+# We want to map temp range onto error range (0–3.5)
+error_min <- 0
+error_max <- 3.5
+
+df_hourly_temp <- df_hourly_temp %>%
+  mutate(
+    temp_scaled = scales::rescale(
+      temp_mean,
+      to   = c(error_min, error_max),
+      from = c(temp_min, temp_max)
+    )
+  )
+
+```
+
+```{r}
+p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+    # Temperature as histogram-like bars in the background
+  geom_col(
+    data = df_hourly_temp,
+    aes(
+      x = hour_num,
+      y = temp_scaled,
+      fill = temp_mean
+    ),
+    inherit.aes = FALSE,
+    alpha = 0.45,
+    width = 0.9
+  ) +
+  
+  # Temperature color ramp
+  scale_fill_gradientn(
+    colours = viridis::viridis(100, option = "C"),
+    name = "Mean Temp (°C)"
+  ) +
+  
+    geom_line(linewidth = 1.2) +
+    geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
+    geom_point(size = 1.8) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +  
+    scale_color_manual(
+      values = c(
+        "rk_cv_rmse" = "#6699CC",
+        "rk_cv_mae"  = "#CC6677"
+      ),
+      labels = c(
+        "rk_cv_rmse" = "Root Mean Square Error (RMSE)",
+        "rk_cv_mae"  = "Mean Absolute Error (MAE)"
+      )
+    ) +
+    scale_linetype_manual(
+      name = "",
+      values = c("Perfect Prediction (Error = 0)" = "dotted")
+    ) +
+    labs(
+      title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
+      subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
+      x        = "Hour of the Day",
+      y        = "Error Metric [°C]",
+      color    = "Metrics"
+    ) +
+    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "top",
+      legend.box       = "horizontal",
+      panel.grid.minor = element_blank(),
+      panel.spacing    = unit(0.8, "lines"),
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text       = element_text(face = "bold")
+    )
+
+p_cv
+
+```
+
 
 --------------------------------------------------------------------------------
 
