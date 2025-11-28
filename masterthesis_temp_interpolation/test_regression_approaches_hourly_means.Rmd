@@ -102,6 +102,12 @@ temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
 
+# Drop Gaiberg station as it is outside of AOI
+temp_clean_station_hm <- temp_clean_station_hm %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Gaiberg_69251_21:WeatherObserved"
+  ))
+
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
