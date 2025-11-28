@@ -1066,15 +1066,19 @@ cv_weather_combined <- cv_metrics_join %>%
 ```
 
 ```{r}
+
+# Selecting mean weather variables relevant for plotting
 weather_vars <- c(
   "temperature_mean", "relativehumidity_mean", "dewpoint_mean",
   "windspeed_mean", "solarradiation_mean",
   "precipitation_mean", "pressure_mean"
 )
 
+# Creating a long table for all weather variables against RMSE
 df_long <- cv_weather_combined %>%
   pivot_longer(cols = all_of(weather_vars), names_to = "variable", values_to = "value")
 
+# Plot RMSE against weather variable values
 ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
@@ -1085,8 +1089,31 @@ ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
     x = "Weather Variable Value",
     y = "RMSE [°C]"
   )
-
 ```
+
+```{r}
+
+# Add plot showing diurnal pattern of weather variables with the RK LOOCV RMSE also added
+# Size of RMSE shows its quantity
+ggplot(df_long, aes(
+    x = hour,              # numeric hour (0–23)
+    y = value,             # weather variable
+    color = rk_cv_rmse,    # RMSE as color
+    size  = rk_cv_rmse
+)) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_c(option = "C") +
+  facet_wrap(~ variable, scales = "free_y") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Hourly Weather Conditions with RK LOOCV RMSE Indicated",
+    x = "Hour of the Day",
+    y = "Weather Variable Value",
+    color = "RMSE [°C]",
+    size  = "RMSE [°C]"
+  )
+```
+
 
 ```{r}
 p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
