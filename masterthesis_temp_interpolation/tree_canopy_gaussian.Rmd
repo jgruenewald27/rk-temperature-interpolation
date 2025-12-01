@@ -1141,11 +1141,11 @@ Red outlines highlight hours where regression residuals show significant spatial
     )
 
   # Save each page
-  # ggsave(
-  #   filename = file.path(output_pval, sprintf("covariate_pvalues.png")),
-  #   plot = p_pval,
-  #   width = 12, height = 10, dpi = 300
-  # )
+  ggsave(
+    filename = file.path("../plots/gaussian_covariate_pvalues.png"),
+    plot = p_pval,
+    width = 12, height = 10, dpi = 300
+  )
 }
 
 p_pval
