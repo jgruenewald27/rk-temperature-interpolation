@@ -112,7 +112,7 @@ if (!terra::compareGeom(dem, tch_aligned, ghs_bh_aligned, stopOnError = FALSE)) 
 # Set a Gaussian filter
 
 # Gaussian filter with radius 60 m and default sigma (≈ radius/3)
-w <- focalWeight(tch, d = 60, type = "Gauss")
+w <- focalWeight(tch, d = 22.86647, type = "Gauss")
 
 # Apply Gaussian smoothing to the ALIGNED canopy height raster
 tch_cooling <- focal(tch_aligned, w = w, fun = sum, na.rm = TRUE)
@@ -152,7 +152,7 @@ grids_ras <- stack(grids)
 # Convert to SpatialGridDataFrame
 grids_sp <- as(grids_ras, "SpatialGridDataFrame")
 
-grids_sp@data
+grids_sp@grid@cellsize
 ```
 
 ```{r Adding covariates to temperature data}
@@ -261,7 +261,7 @@ p_corr_temp_cov
 
 ```{r Check for multicollineraity}
 
-#define multiple linear regression model
+# define multiple linear regression model
 mlr_coll <- lm(hm_temp ~ elevation + canopy_cooling + building_height, data = temp_clean_station_hm_cov)
 
 mlr_coll
@@ -271,9 +271,10 @@ vif_df <- car::vif(mlr_coll) %>%
   tibble::rownames_to_column("covariate") %>%
   rename(VIF = 2)
 
-vif_df   # check VIF table
+# to check VIF table
+vif_df   
 
-# --- Plot VIF values ---
+# Plot VIF values
 p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
   geom_col(color = "grey30", linewidth = 0.3) +
   scale_fill_manual(
