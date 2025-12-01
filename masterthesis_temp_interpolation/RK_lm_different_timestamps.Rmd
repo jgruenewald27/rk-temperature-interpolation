@@ -1126,7 +1126,7 @@ di_weather <- ggplot(df_long, aes(
     color = rk_cv_rmse,    # RMSE as color
     size  = rk_cv_rmse
 )) +
-  geom_point(alpha = 0.5) +
+  geom_point(alpha = 0.7, size = 1.5) +
   scale_color_viridis_c(option = "C") +
   scale_x_continuous(
     breaks = c(0, 6, 12, 18, 24),
