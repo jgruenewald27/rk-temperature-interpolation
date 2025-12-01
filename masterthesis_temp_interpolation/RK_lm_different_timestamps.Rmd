@@ -1079,22 +1079,6 @@ weather_vars <- c(
 df_long <- cv_weather_combined %>%
   pivot_longer(cols = all_of(weather_vars), names_to = "variable", values_to = "value")
 
-# Plot RMSE against weather variable values
-ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
-  facet_wrap(~ variable, scales = "free_x") +
-  theme_minimal(base_size = 14) +
-  labs(
-    title = "RK LOOCV RMSE vs Other Weather Variables Captured by the Weather Stations",
-    subtitle = "Timespan: 2023-07-01 00:00:00 until 2023-07-12 23:00:00",
-    x = "Weather Variable Value",
-    y = "RMSE [°C]"
-  )
-```
-
-```{r Plot RMSE against weather and time}
-
 # Remove NA rows from df
 df_long <- df_long[!is.na(df_long$value), ]
 
@@ -1108,6 +1092,31 @@ nice_names <- c(
   temperature_mean = "Temperature",
   windspeed_mean = "Wind Speed"
 )
+
+# Plot RMSE against weather variable values
+rel_rmse_weather <- ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
+  facet_wrap(~ variable, scales = "free_x", labeller = labeller(variable = nice_names)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Relationship Between RK LOOCV RMSE and Hourly Mean Weather Variables",
+    subtitle = "Hourly means (1–12 July 2023) compared against RK model error",
+    x = "Weather Variable Value",
+    y = "RMSE [°C]"
+  )
+
+rel_rmse_weather
+
+# Save the output plot
+ggsave(
+  filename = file.path("../plots/hourly_weather_relationship_rmse.png"),
+  plot = rel_rmse_weather,
+  width = 12, height = 8, dpi = 300
+)
+```
+
+```{r Plot RMSE against weather and time}
 
 # Add plot showing diurnal pattern of weather variables with the RK LOOCV RMSE also added
 # Size of RMSE shows its quantity
