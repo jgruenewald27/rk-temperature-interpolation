@@ -226,17 +226,19 @@ Set Gaussian filter
 # That effect is strongest closest to the tree and fades with distance.
 # A Gaussian filter models this natural distance decay very well.
 
-#set margins for plots
-par(mfrow = c(2, 1), oma = c(0, 1, 0, 1))
+# save original canopy height raster
+tch_orig <- tch    
 
 # Gaussian filter with radius 60 m and default sigma (≈ radius/3)
 w <- focalWeight(tch, d = 60, type = "Gauss")
 
 # Apply to tree canopy height to model decaying influence
-tch <- focal(tch, w = w, fun = sum, na.rm = TRUE)
+tch_cooling <- focal(tch_orig, w = w, fun = sum, na.rm = TRUE)
 
-plot(tch, main ="Original Input Raster Tree Canopy Height ") #plot orig
-plot(tch, main="Gaussian Tree Cooling Effect (60 m)") #plot Gaussian filter in 60 m distaince
+par(mfrow = c(2, 1), oma = c(0, 1, 0, 1))
+
+plot(tch_orig, main = "Original Tree Canopy Height")
+plot(tch_cooling, main = "Gaussian Tree Cooling Effect (60 m)")
 ```
 
 --------------------------------------------------

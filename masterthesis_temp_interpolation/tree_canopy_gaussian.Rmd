@@ -1,0 +1,260 @@
+---
+title: "tree_canopy_gaussian"
+output: html_document
+date: "2025-12-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Libraries}
+
+# Load Required Libraries
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+library(dplyr)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(ggspatial)
+library(ggforce) 
+library(scales)
+library(gridExtra)
+library(corrplot)
+library(viridis)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
+```{r Load and preprocess data}
+
+# Import of pre-processed temp data and import and pre-processing of covariates 
+
+# Import pre-processed hourly means, AOI and station coords
+temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+
+# Drop Gaiberg station as it is outside of AOI
+temp_clean_station_hm <- temp_clean_station_hm %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Gaiberg_69251_21:WeatherObserved"
+  ))
+
+# Import the covariates
+dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the data
+temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
+hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
+station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+dem <- terra::project(dem, y = crs(temp_clean_station_hm))
+tch <- terra::project(tch, y = crs(temp_clean_station_hm))
+ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
+
+if (!identical(crs(tch), crs(dem))) {
+  stop("CRS mismatch: Canopy height and DEM do not have the same coordinate reference system.")
+}
+
+if (!identical(crs(ghs_bh), crs(dem))) {
+  stop("CRS mismatch: Building height and DEM do not have the same coordinate reference system.")
+}
+
+cat("All covariates share the same CRS.\n")
+
+# Convert to SpatialPointsDataFrame
+station_coords <- as(station_coords_sf, "Spatial")
+
+# Create a Raster Stack for all covariate information
+
+cat("Checking input raster resolutions (x by y):\n")
+cat(sprintf("DEM:    %s\n", paste(terra::res(dem), collapse = " x ")))
+cat(sprintf("TCH:    %s\n", paste(terra::res(tch), collapse = " x ")))
+cat(sprintf("GHS_BH: %s\n\n", paste(terra::res(ghs_bh), collapse = " x ")))
+
+# Align canopy height and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Check alignment after resampling
+if (!terra::compareGeom(dem, tch_aligned, ghs_bh_aligned, stopOnError = FALSE)) {
+  stop("Covariate rasters are not perfectly aligned after resampling. Check extent/resolution/CRS.")
+}
+
+# Set a Gaussian filter
+
+# Gaussian filter with radius 60 m and default sigma (≈ radius/3)
+w <- focalWeight(tch, d = 60, type = "Gauss")
+
+# Apply Gaussian smoothing to the ALIGNED canopy height raster
+tch_cooling <- focal(tch_aligned, w = w, fun = sum, na.rm = TRUE)
+
+# Ensure cooling raster matches DEM resolution and extent
+tch_cooling_aligned <- terra::resample(tch_cooling, dem, method = "bilinear")
+
+names(tch_cooling_aligned) <- "canopy_cooling"
+
+# Combine layers into a single SpatRaster stack
+env_stack <- c(dem, tch_aligned, tch_cooling_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elevation", "canopy_height", "canopy_cooling", "building_height")
+
+# Code to include lat and lon information in raster stack
+
+# Also add lat and lon to the raster stack
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+# Preparation of grid as a covariate for running RK
+grids_ras <- stack(grids)
+
+# Convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame")
+
+grids_sp@data
+```
+
+```{r Adding covariates to temperature data}
+
+# Convert Spatial object to RasterBrick -> SpatRaster
+r_brick   <- brick(grids_sp)
+grid_terra <- rast(r_brick)
+
+# Extract raster values at point features
+ex <- terra::extract(grid_terra, temp_clean_station_hm)
+
+# Aggregate duplicates to a single row per original feature
+# Use mean
+ex_agg <- aggregate(. ~ ID, data = ex, FUN = mean, na.rm = TRUE)
+
+# Reorder aggregated rows to match original feature order
+ex_agg <- ex_agg[match(seq_len(nrow(temp_clean_station_hm)), ex_agg$ID), -1]
+
+# Bind attributes + extracted covariates
+temp_clean_station_hm_cov <- cbind(as.data.frame(temp_clean_station_hm), ex_agg)
+
+str(temp_clean_station_hm_cov)
+```
+
+
+Calculate correlation between the three covariates and the dependent variable temperature using a linear regression model
+
+```{r Calculate correlation between the three covariates and the dependent variable temperature}
+
+# Pick relevant columns
+df <- temp_clean_station_hm_cov %>%
+  st_drop_geometry() %>%   # remove geometry column
+  dplyr::select(entity_id, hm_temp, elevation, canopy_cooling, building_height)
+
+# Aggregate temperature per station (mean across time)
+station_df <- df %>%
+  group_by(entity_id, elevation, canopy_cooling, building_height) %>%
+  summarise(mean_temp = mean(hm_temp, na.rm = TRUE), .groups = "drop")
+
+# Compute correlation matrix (Pearson + Spearman)
+vars <- c("mean_temp", "elevation", "canopy_cooling", "building_height")
+
+corr_p <- cor(station_df[vars], use = "pairwise.complete.obs", method = "pearson")
+corr_s <- cor(station_df[vars], use = "pairwise.complete.obs", method = "spearman")
+
+print("Pearson correlation:")
+print(corr_p)
+
+print("Spearman correlation:")
+print(corr_s)
+
+# reshape to long format
+station_long <- station_df %>%
+  pivot_longer(cols = c(elevation, canopy_cooling, building_height),
+               names_to = "covariate", values_to = "value")
+
+# 2. Compute Pearson correlation per covariate
+cors <- station_long %>%
+  group_by(covariate) %>%
+  summarise(
+    r = cor(value, mean_temp, method = "pearson", use = "pairwise.complete.obs")
+  ) %>%
+  mutate(
+    label = sprintf("italic(r) == %.2f", r)   # format for plotmath
+  )
+
+p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  #geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), color = "blue", linetype = "dashed")
+  facet_wrap(~ covariate, scales = "free_x", nrow = 1,
+             labeller = labeller(
+               covariate = c(elevation = "Elevation [m]",
+                             canopy_height = "Canopy Cooling [m]",
+                             building_height = "Building Height [m]")
+             )) +
+  geom_text(
+    data = cors,
+    aes(label = label),
+    x = -Inf, y = Inf,
+    hjust = -0.2, vjust = 2,
+    parse = TRUE,
+    size = 5,
+    fontface = "bold",
+    inherit.aes = FALSE
+  ) +
+  scale_y_continuous(limits = c(9, 15)) +
+  scale_x_continuous(expand = expansion(mult = c(0.02, 0.02))) +
+  labs(title = "Linear Relationships Between Yearly Mean Temperature and Environmental Covariates",
+       x = NULL, y = "Yearly Mean Temperature [°C]") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    plot.title = element_text(
+        face = "bold", size = 20, hjust = 0.5,
+        margin = margin(t = 10, b = 10)),
+    axis.title.y = element_text(size = 14),
+    axis.text = element_text(size = 12)
+  )
+
+p_corr_temp_cov
+
+# Save output to file
+#ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 6, dpi = 300)
+```
