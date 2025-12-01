@@ -226,7 +226,7 @@ p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
   facet_wrap(~ covariate, scales = "free_x", nrow = 1,
              labeller = labeller(
                covariate = c(elevation = "Elevation [m]",
-                             canopy_height = "Canopy Cooling [m]",
+                             canopy_cooling = "Gaussian-smoothed Canopy Height [m]",
                              building_height = "Building Height [m]")
              )) +
   geom_text(
@@ -257,4 +257,66 @@ p_corr_temp_cov
 
 # Save output to file
 #ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 6, dpi = 300)
+```
+
+```{r Check for multicollineraity}
+
+#define multiple linear regression model
+mlr_coll <- lm(hm_temp ~ elevation + canopy_cooling + building_height, data = temp_clean_station_hm_cov)
+
+mlr_coll
+
+vif_df <- car::vif(mlr_coll) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("covariate") %>%
+  rename(VIF = 2)
+
+vif_df   # check VIF table
+
+# --- Plot VIF values ---
+p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
+  geom_col(color = "grey30", linewidth = 0.3) +
+  scale_fill_manual(
+    values = c(
+      "building_height" = "darkorange3",
+      "canopy_cooling"   = "darkolivegreen",
+      "elevation"       = "burlywood2"
+    ),
+    guide = "none"
+  ) +
+  scale_x_discrete(
+    labels = c(
+      "building_height" = "Building Height",
+      "canopy_cooling"   = "Gaussian-smoothed Canopy Height",
+      "elevation"       = "Elevation"
+    )
+  ) +
+  geom_hline(yintercept = 5,  linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 0.5, y = 5.2,
+         label = "VIF > 5 high multicollinearity",
+         hjust = 0, size = 4, color = "grey40") +
+  geom_text(aes(label = round(VIF, 2)),
+          vjust = -0.5, size = 5) +
+  labs(
+    title = "Variance Inflation Factors (VIF) for Model Covariates",
+    caption = "Values assess multicollinearity among predictors",
+    x = "Covariate",
+    y = "VIF"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "grey40"),
+    plot.caption.position = "plot",
+    plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85")
+  )
+
+p_vif
+
+# Save output to file
+#ggsave("../plots/multicollinearity.png", p_vif, width = 8, height = 5, dpi = 300)
 ```
