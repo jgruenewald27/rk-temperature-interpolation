@@ -1095,6 +1095,10 @@ ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
 
 ```{r Plot RMSE against weather and time}
 
+# Remove NA rows from df
+df_long <- df_long[!is.na(df_long$value), ]
+
+# Add nice labels for subplots
 nice_names <- c(
   dewpoint_mean = "Dewpoint",
   precipitation_mean = "Precipitation",
@@ -1104,7 +1108,6 @@ nice_names <- c(
   temperature_mean = "Temperature",
   windspeed_mean = "Wind Speed"
 )
-
 
 # Add plot showing diurnal pattern of weather variables with the RK LOOCV RMSE also added
 # Size of RMSE shows its quantity
@@ -1134,7 +1137,6 @@ di_weather <- ggplot(df_long, aes(
     plot.title = element_text(hjust = 0.5),
     plot.subtitle = element_text(hjust = 0.5)
   )
-
 
 di_weather
 
