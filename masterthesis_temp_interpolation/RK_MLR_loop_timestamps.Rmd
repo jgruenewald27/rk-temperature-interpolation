@@ -598,6 +598,60 @@ if (exists("rk_metrics_all")) {
 
 Plots to analyse model performance metrics for 12 days
 
+```{r Read performance metrics}
+
+# Read MLR metrics
+lm_metrics <- read.csv("../RK_07_2023_12days/lm_model_performance_summary.csv",
+                       stringsAsFactors = FALSE)
+# Read LOOCV metrics
+rk_cv_metrics <- read.csv("../RK_07_2023_12days/rk_loocv_metrics.csv",
+                       stringsAsFactors = FALSE)
+# Read RK metrics
+rk_metrics <- read.csv("../RK_07_2023_12days/rk_metrics.csv",
+                       stringsAsFactors = FALSE)
+
+# Clean and standardize timestamp, date, and hour columns
+preprocess_metrics <- function(df) {
+  df %>%
+    mutate(
+      # If the timestamp is only "YYYY-MM-DD", append "00:00:00"
+      timestamp = if_else(nchar(timestamp) == 10, 
+                          paste0(timestamp, " 00:00:00"), timestamp),
+
+      # Convert to POSIXct
+      timestamp = as.POSIXct(timestamp, 
+                             format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+      # Extract date and hour
+      date = as.Date(timestamp, tz = "Europe/Berlin"),
+      hour = lubridate::hour(timestamp)
+    )
+}
+
+# Apply preprocessing to each metric table
+lm_metrics     <- preprocess_metrics(lm_metrics)
+rk_cv_metrics  <- preprocess_metrics(rk_cv_metrics)
+rk_metrics     <- preprocess_metrics(rk_metrics)
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+
+# Reshape to long format
+rk_cv_metrics_long <- rk_cv_metrics %>%
+  pivot_longer(cols = c(rk_cv_rmse, rk_cv_mae),
+               names_to = "metric",
+               values_to = "value")
+
+# Reshape to long format
+rk_metrics_long <- rk_metrics %>%
+  pivot_longer(cols = c(rk_rmse, rk_mae),
+               names_to = "metric",
+               values_to = "value")
+```
+
+
 ```{r Analyse MLR metrics 12 days}
 
 # Daily Evaluation of Multiple Linear Regression Model Performance
@@ -639,10 +693,10 @@ p_lm
 # ggsave("../plots/lm_metrics_by_day_01-01-2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
-```{r Analyse CV metrics less 13}
+```{r Analyse LOOCV metrics 12 days}
 
-# Daily Evaluation of the Regression-Kriging Cross-Validation Metrics
-p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+# Daily Evaluation of the LOOCV RK Metrics
+p_cv <- ggplot(rk_cv_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
     geom_line(linewidth = 1.2) +
     geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
     geom_point(size = 1.8) +
@@ -689,10 +743,10 @@ p_cv
 # )
 ```
 
-```{r Analyse RK metrics less 13}
+```{r Analyse RK metrics 12 days}
 
 # Daily Evaluation of the Regression-Kriging Model Performance Metrics
-p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+p_rk <- ggplot(rk_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
   geom_line(linewidth = 1.2) +
   geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),color = "grey60") +
   geom_point(size = 1.8) +
@@ -1482,31 +1536,6 @@ too small. Maybe something for the Appendix if they contain some additional valu
 
 ```{r Analyse MLR metrics}
 
-# Read mlr metrics
-lm_metrics <- read.csv("../rk_results_07-2023/lm_model_performance_summary.csv",
-                       stringsAsFactors = FALSE)
-
-# Parse datetime column correctly (same approach as CV & RK)
-lm_metrics <- lm_metrics %>%
-  mutate(
-    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = lubridate::hour(datetime_calc)
-  )
-
-# Reshape to long format
-lm_metrics_long <- lm_metrics %>%
-  pivot_longer(cols = c(r_squared, adj_r_squared),
-               names_to = "metric",
-               values_to = "value")
-
-# Filter year 2023
-lm_df_plot <- lm_metrics_long %>%
-  filter(year(date) == 2023)
-
-# Make sure hour is numeric
-lm_df_plot$hour <- as.numeric(lm_df_plot$hour)
-
 # Number of days per plot
 days_per_page <- 12  
 
@@ -1551,39 +1580,6 @@ for (i in seq_len(n_pages)) {
 ```
 
 ```{r Analyse RK LOOCV metrics}
-
-# Read cv metrics
-cv_metrics <- read.csv("../RK_07_2023_12days/rk_loocv_metrics.csv",
-                       stringsAsFactors = FALSE)
-
-cv_metrics <- cv_metrics %>%
-  mutate(
-    timestamp = if_else(
-      nchar(timestamp) == 10, paste0(timestamp, " 00:00:00"), timestamp
-    ),
-    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-    date = as.Date(format(timestamp, tz = "Europe/Berlin")),
-    hour  = hour(timestamp),
-    month = month(timestamp),
-    year  = year(timestamp)
-  ) %>%
-  filter(year == 2023, month == 7)
-
-# Reshape to long format
-cv_metrics_long <- cv_metrics %>%
-  pivot_longer(cols = c(rk_cv_rmse, rk_cv_mae),
-               names_to = "metric",
-               values_to = "value")
-
-# Filter nur 2023
-df_plot <- cv_metrics_long %>%
-  filter(year(date) == 2023)
-
-df_plot <- df_plot %>%
-  filter(!is.na(date)) %>%                  
-  mutate(date = as.Date(date)) 
-
-df_plot$hour <- as.numeric(df_plot$hour)
 
 # Loop over pages and plot cv metrics
 for (i in seq_len(n_pages)) {
@@ -1634,31 +1630,6 @@ for (i in seq_len(n_pages)) {
 ```
 
 ```{r Analyse RK metrics}
-
-# Read rk metrics
-rk_metrics <- read.csv("../rk_results_07-2023/rk_metrics.csv",
-                       stringsAsFactors = FALSE)
-
-# Parse datetime correctly
-rk_metrics <- rk_metrics %>%
-  mutate(
-    datetime_calc = as.POSIXct(datetime_local, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-    date = as.Date(datetime_calc),
-    hour = lubridate::hour(datetime_calc)
-  )
-
-# Reshape to long format
-rk_metrics_long <- rk_metrics %>%
-  pivot_longer(cols = c(rk_rmse, rk_mae),
-               names_to = "metric",
-               values_to = "value")
-
-# Filter year 2023
-df_plot <- rk_metrics_long %>%
-  filter(year(date) == 2023)
-
-# Make sure hour is numeric
-df_plot$hour <- as.numeric(df_plot$hour)
 
 # Loop over pages and plot rk metrics
 for (i in seq_len(n_pages)) {
