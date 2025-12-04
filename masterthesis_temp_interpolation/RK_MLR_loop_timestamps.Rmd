@@ -83,8 +83,11 @@ temp_clean_station <- temp_clean %>%
   ))
 
 # Check if exactly 5 stations were dropped
-length(unique(na.omit(temp_clean$entity_id)))
-length(unique(na.omit(temp_clean_station$entity_id)))
+cat("Number of stations BEFORE cleaning: ",
+    length(unique(na.omit(temp_clean$entity_id))), "\n")
+
+cat("Number of stations AFTER cleaning:  ",
+    length(unique(na.omit(temp_clean_station$entity_id))), "\n")
 
 # Calculate hourly mean temp for cleaned data
 temp_clean_station_hm <- temp_clean_station %>%
@@ -99,16 +102,9 @@ temp_clean_station_hm <- temp_clean_station %>%
 
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
-# Import pre-processed hourly means, AOI and station coords
-temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+# Import AOI and station coords
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
-
-# Drop Gaiberg station as it is outside of AOI
-temp_clean_station_hm <- temp_clean_station_hm %>%
-  filter(!entity_id %in% c(
-    "hd:DE_Gaiberg_69251_21:WeatherObserved"
-  ))
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
@@ -120,32 +116,29 @@ ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 tch[tch == 101] <- NA
 
 # Reproject the data
-temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
-hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
-station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+hd_bounds <- st_transform(hd_bounds, crs = st_crs(temp_clean_station_hm))
+station_coords_sf <- st_transform(station_coords_sf, crs = st_crs(temp_clean_station_hm))
 dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 tch <- terra::project(tch, y = crs(temp_clean_station_hm))
 ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
+# Check if any CRS mismatches
 if (!identical(crs(tch), crs(dem))) {
-  stop("CRS mismatch: Canopy height and DEM do not have the same coordinate reference system.")
+  stop("CRS mismatch: Tree canopy height and DEM don't have the same CRS.")
 }
-
 if (!identical(crs(ghs_bh), crs(dem))) {
-  stop("CRS mismatch: Building height and DEM do not have the same coordinate reference system.")
+  stop("CRS mismatch: Building height and DEM don't have the same CRS.")
 }
-
 cat("All covariates share the same CRS.\n")
 
 # Convert to SpatialPointsDataFrame
 station_coords <- as(station_coords_sf, "Spatial")
 
 # Create a Raster Stack for all covariate information
-
 cat("Checking input raster resolutions (x by y):\n")
-cat(sprintf("DEM:    %s\n", paste(terra::res(dem), collapse = " x ")))
-cat(sprintf("TCH:    %s\n", paste(terra::res(tch), collapse = " x ")))
-cat(sprintf("GHS_BH: %s\n\n", paste(terra::res(ghs_bh), collapse = " x ")))
+cat(sprintf("DEM:    %.2f x %.2f\n", terra::res(dem)[1], terra::res(dem)[2]))
+cat(sprintf("TCH:    %.2f x %.2f\n", terra::res(tch)[1], terra::res(tch)[2]))
+cat(sprintf("GHS_BH: %.2f x %.2f\n\n", terra::res(ghs_bh)[1], terra::res(ghs_bh)[2]))
 
 # Align canopy height and building height to DEM resolution and extent
 tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
