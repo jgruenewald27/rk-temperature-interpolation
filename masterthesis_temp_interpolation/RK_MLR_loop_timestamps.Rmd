@@ -1,5 +1,5 @@
 ---
-title: "RK_lm_different_timestamps"
+title: "RK_MLR_loop_timestamps"
 author: "Johannes Gruenewald"
 date: "2024-11-26"
 output: html_document
@@ -53,10 +53,10 @@ library(car)
 
 ```{r Load temp data}
 
-# Complete data import and pre-processing
+# Complete data import and pre-processing of the temperature (July 2023)
 
 # Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
 
 # Removes rows where temp is NA
 temp <- temp %>% filter(!is.na(temperature))
@@ -78,10 +78,11 @@ temp_clean_station <- temp_clean %>%
     "hd:DE_Heidelberg_69120_12:WeatherObserved",
     "hd:DE_Heidelberg_69120_34:WeatherObserved",
     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
     "hd:DE_Heidelberg_46:WeatherObserved"
   ))
 
-# Check if exactly 4 stations were dropped
+# Check if exactly 5 stations were dropped
 length(unique(na.omit(temp_clean$entity_id)))
 length(unique(na.omit(temp_clean_station$entity_id)))
 
@@ -94,7 +95,7 @@ temp_clean_station_hm <- temp_clean_station %>%
 
 --------------------------------------------------------------------------------
 
-```{r Load and preprocess data}
+```{r Load and preprocess covariates}
 
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
