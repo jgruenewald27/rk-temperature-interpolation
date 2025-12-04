@@ -182,7 +182,7 @@ grids_sp <- as(grids_ras, "SpatialGridDataFrame")
 ```{r Create output folder}
 
 # Create output dirs
-output_dir <- "../delete_RK_07_2023_12days"
+output_dir <- "../RK_07_2023_12days"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 variogram_dir <- file.path(output_dir, "variogram_fits")
@@ -236,7 +236,7 @@ for (i in seq_along(timestamps)) {
   cat(sprintf("\n[%d/%d] Processing: timestamp = %s\n", i, total, dt_lab))  
   
   # ------------------------------------------------
-  # STEP 1: Filter hourly data and visualize
+  # STEP 1: Filter hourly data and extract covariates from spatial grid
   # ------------------------------------------------
   
   sel_temp_hm <- temp_clean_station_hm %>%
@@ -248,24 +248,24 @@ for (i in seq_along(timestamps)) {
     cat("  → skipped (n < 20)\n")                          
     next                                                         
   }
-
-  # ------------------------------------------------
-  # STEP 2: Extract covariates from spatial grid
-  # ------------------------------------------------
   
   # Convert Spatial object to RasterBrick
   r_brick <- brick(grids_sp)
+  
   # Convert RasterBrick to terra SpatRaster object
   grid_terra <- rast(r_brick) 
+  
   # Extract raster values at the point locations
   extracted_vals <- terra::extract(grid_terra, sel_temp_hm)
+  
   # Remove the first column (ID)
   extracted_vals <- extracted_vals[,-1]
+  
   # Combine the point data with the extracted raster values
   temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
   
   # ------------------------------------------------
-  # STEP 3: Fit multiple linear regression
+  # STEP 2: Fit MLR
   # ------------------------------------------------
   
   lm.temp_shm <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_shm.ex)
@@ -305,7 +305,7 @@ for (i in seq_along(timestamps)) {
   st_crs(temp_shm.sf) <- st_crs(grids_sp)
   
   # ------------------------------------------------
-  # STEP 4: Compute variogram and fit model
+  # STEP 3: Compute variogram and fit model
   # ------------------------------------------------
   
   # Compute empirical variogram map of model residuals
@@ -367,7 +367,7 @@ for (i in seq_along(timestamps)) {
   dev.off()
   
   # ------------------------------------------------
-  # STEP 5a: Cross-validation of variogram model
+  # STEP 4a: Cross-validation of residual kriging
   # ------------------------------------------------
 
   cv_resid <- krige.cv(residuals ~ 1,
@@ -407,7 +407,7 @@ for (i in seq_along(timestamps)) {
          plot = p_cv, width = 8, height = 6, dpi = 300)
   
   # ------------------------------------------------
-  # STEP 5b: LOOCV for full Regression Kriging
+  # STEP 4b: LOOCV for full RK
   # ------------------------------------------------
 
   cv_rk <- krige.cv(
@@ -460,7 +460,7 @@ for (i in seq_along(timestamps)) {
   )
 
   # ------------------------------------------------
-  # STEP 6: Regression Kriging prediction
+  # STEP 5: Regression Kriging prediction
   # ------------------------------------------------
     
   # define kriging model using fitted variogram
@@ -497,7 +497,7 @@ for (i in seq_along(timestamps)) {
   dev.off()
   
   # ------------------------------------------------
-  # STEP 7: Evaluate RK predictions at station points
+  # STEP 6: Evaluate RK predictions at station points
   # ------------------------------------------------
   
   # Match station coordinates with observed stations only
@@ -553,7 +553,7 @@ for (i in seq_along(timestamps)) {
 }
 
 # ------------------------------------------------
-# Finalize and save results
+# STEP 7: Finalize and save results
 # ------------------------------------------------
 
 close(pb)                                                        
