@@ -1,5 +1,5 @@
 ---
-title: "collinearity_covariates"
+title: "Multicollinearity_covariates"
 author: "Johannes Gruenewald"
 date: "2025-07-10"
 output: html_document
@@ -44,7 +44,7 @@ library(lattice)
 library(car)
 ```
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 ```{r Load temp data}
 
@@ -182,7 +182,7 @@ grids_ras <- stack(grids)
 grids_sp <- as(grids_ras, "SpatialGridDataFrame")
 ```
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 Calculate correlation between the three covariates
 Because covariates are not normally distributed use Spearman’s rank correlation
@@ -223,12 +223,7 @@ The results fit really well to Heidelberg and its surroundings and describe how 
 -	Elevation vs. Building height (r ≈ −0.34): Moderate negative correlation — taller buildings are concentrated at lower elevations (valley floor).
 -	Canopy vs. Building height (r ≈ −0.36): Moderate negative correlation — built-up areas generally coincide with less canopy, and vice versa (they tend not to co-occur).
 
---------------------------------------------------
-
-
-
-
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 ```{r Adding covariates to temperature data}
 
