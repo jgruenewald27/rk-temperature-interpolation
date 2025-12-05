@@ -1,8 +1,0 @@
-{
-"type": "FeatureCollection",
-"name": "bbox",
-"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
-"features": [
-{ "type": "Feature", "properties": { "fid": 1, "GID_2": "DEU.1.15_1", "GID_0": "DEU", "COUNTRY": "Germany", "GID_1": "DEU.1_1", "NAME_1": "Baden-Württemberg", "NL_NAME_1": "NA", "NAME_2": "Heidelberg", "VARNAME_2": "NA", "NL_NAME_2": "NA", "TYPE_2": "Stadtkreis", "ENGTYPE_2": "District", "CC_2": "08221", "HASC_2": "DE.BW.HD", "width": 0.221004, "height": 0.107426, "area": 0.023741, "perimeter": 0.656858 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 8.573124884999972, 49.35216140800015 ], [ 8.794128419000058, 49.35216140800015 ], [ 8.794128419000058, 49.459587098000021 ], [ 8.573124884999972, 49.459587098000021 ], [ 8.573124884999972, 49.35216140800015 ] ] ] } }
-]
-}
