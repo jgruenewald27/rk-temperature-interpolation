@@ -56,9 +56,9 @@ lm_metrics_long <- lm_metrics %>%
 
 How well do the environmental covariates describe hourly mean temperature
 
-Following plot can answer this research question:
-- [ ] Wie gut beschreiben die covariates die hourly mean temperature zu bestimmten timestamps 
-- [ ] Was sind mögliche Erklärungen für diese patterns? Welche Prozesse können zu diesen patterns führen?
+The following plot aims to address these research questions:
+- [ ] How well do the covariates describe the hourly mean temperature at specific timestamps?  
+- [ ] What are possible explanations for these patterns? What processes can lead to them?
 
 ```{r}
 # Read and prepare data
@@ -184,8 +184,9 @@ Overall Canopy height has the smallest impact of the three covariates on the hou
 
 --------------------------------------------------------------------------------
 
-The following figure will answer this research questions:
-- [ ] Bei welchen timestamps sind die covariates besonders signifikant? Gibt es da bestimmte patterns bei bestimmten klimatischen Bedingungen oder täglich widerkehrende Regelmäßigkeiten?
+The following plot aims to answer this research question:
+- [ ] At which timestamps are the covariates particularly significant? Are there certain patterns under specific climatic conditions or daily recurring regularities?
+- [ ] How regularly do the regression residuals show significant spatial autocorrelation? Are there any specific patterns?
 
 Spatial Autocorrelation of MLR model residuals
 
