@@ -264,66 +264,6 @@ for (one_day in all_days) {
 
   # Convert one_day to proper Date for plotting and filenames
   day_label <- as.Date(one_day, origin = "1970-01-01")
-  
-  # Plot
-  p_moran <- ggplot(moran_results, aes(x = hour, y = moran_i)) +
-    geom_ribbon(aes(ymin = lo95, ymax = hi95, fill = "95% confidence envelope"), alpha = 0.5) +
-    geom_hline(
-      data = data.frame(y = 0, label = "No autocorrelation"),
-      aes(yintercept = y, linetype = label),
-      color = "black"
-    ) +
-    geom_hline(
-      data = data.frame(y = unique(moran_results$expected), label = "Expected under randomness"),
-      aes(yintercept = y, linetype = label),
-      color = "black"
-    ) +
-    geom_line(color = "black", linewidth = 0.6) +
-    geom_point(aes(color = p_mc < 0.05), size = 2.8) +
-    scale_color_manual(
-      name = "Significance (p < 0.05)",
-      values = c("TRUE" = "#440154", "FALSE" = "#35b779"),
-      labels = c("TRUE" = "Significant", "FALSE" = "Not significant")
-    ) +
-    scale_fill_manual(name = NULL, values = c("95% confidence envelope" = "grey80")) +
-    scale_linetype_manual(
-      name = NULL,
-      values = c("No autocorrelation" = "dashed",
-                 "Expected under randomness" = "dotted")
-    ) +
-    scale_x_datetime(
-      date_labels = "%H:%M",
-      date_breaks = "6 hours",
-      expand = expansion(mult = c(0, 0.02))
-    ) +
-    coord_cartesian(ylim = c(-0.2, 0.6)) +
-    labs(
-      title = "Moran’s I of Regression Residuals",
-      subtitle = paste("Date:", format(day_label, "%Y-%m-%d")),
-      x = "Hour of Day",
-      y = "Moran’s I"
-    ) +
-    guides(
-      color = guide_legend(order = 1),
-      fill = guide_legend(order = 2, override.aes = list(alpha = 0.5)),
-      linetype = guide_legend(order = 3)
-    ) +
-    theme_minimal(base_size = 13) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      legend.position = "bottom",
-      legend.box = "horizontal",
-      legend.title = element_text(size = 6, face = "bold"),
-      legend.text = element_text(size = 6),
-      plot.title = element_text(face = "bold", size = 14),
-      plot.subtitle = element_text(size = 11, color = "grey20"),
-      panel.grid.minor = element_blank()
-    )
-
-  # Save plot
-  out_file <- file.path("../plots/moransI_residuals", paste0("moransI_residuals_", one_day, ".png"))
-  ggsave(out_file, p_moran, width = 8, height = 5, dpi = 300)
-}
 
 moran_summary <- dplyr::bind_rows(moran_summary_list)
 ```
