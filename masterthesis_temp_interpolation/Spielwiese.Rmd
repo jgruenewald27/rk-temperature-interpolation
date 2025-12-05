@@ -302,3 +302,46 @@ cat("Kriging Cross-Validation:\n")
 summary(kr_cv$residual)
 ```
 
+------------------------------------------------------------------------
+
+GAM for all three covariates
+
+Comment: A general rule of thumb is to use a high number of splines and use cross-validation of lambda (λ) values to find the model that generalises best. Remember we can have different splines and lambda values for every variable in our model.
+
+```{r}
+gam_all <- gam(mh_temp ~ 
+                  s(elev) + 
+                  s(canopy) + 
+                  s(bldg), 
+                data = temp_shm.ex)
+summary(gam_all)
+
+concurvity(gam_all, full = TRUE)
+```
+
+Example: Visualize the results
+
+```{r}
+# Vary elevation across its range; fix the others at their median
+predict_temp <- data.frame(
+  elevation = seq(min(temp_shm.ex$elev), max(temp_shm.ex$elev), length.out = 20),
+  tree_canopy_height = median(temp_shm.ex$canopy),
+  building_height = median(temp_shm.ex$bldg)
+)
+
+# Predict using the full GAM model
+predictions <- predict(gam_all, newdata = predict_temp, type = "response", se.fit = TRUE)
+
+# Plot the data and the GAM fit
+ggplot() +
+  geom_point(data = temp_shm.ex, aes(x = elevation, y = mh_temp)) +
+  geom_line(data = data.frame(elevation = predict_temp$elevation, mh_temp = predictions$fit), 
+            aes(x = elevation, y = mh_temp), color = "blue", size = 1) +
+  geom_ribbon(data = data.frame(elevation = predict_temp$elevation, fit = predictions$fit, 
+                                se = predictions$se.fit), aes(x = elevation, 
+                                ymin = fit - 1.96 * se, 
+                                ymax = fit + 1.96 * se), alpha = 0.3) +
+  labs(title = "GAM Fit for Monthly Mean Temperature vs. Elevation", 
+       x = "Elevation [m]", y = "Monthly Mean Temperature [°C]") +
+  theme_minimal()
+```
