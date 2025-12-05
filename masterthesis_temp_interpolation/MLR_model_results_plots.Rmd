@@ -230,17 +230,13 @@ for (one_day in all_days) {
   moran_results <- df_day %>%
     group_split(hour) %>%
     map_dfr(function(df_slice) {
-
       xy <- st_coordinates(df_slice)
-
       knn <- knearneigh(xy, k = 8)
       nb  <- knn2nb(knn)
       lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
-
       mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
       mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
       q  <- quantile(mc$res, c(0.025, 0.975))
-
       tibble(
         hour     = unique(df_slice$hour),
         moran_i  = mt$estimate[["Moran I statistic"]],
@@ -251,19 +247,20 @@ for (one_day in all_days) {
         hi95     = q[2]
       )
     })
+}
   
-  moran_results_clean <- moran_results %>%
-  mutate(
-    date = as.Date(hour, tz = "Europe/Berlin"),
-    hour = lubridate::hour(hour),
-    moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
-  ) %>%
-  select(date, hour, moran_i, p_mc, moran_sig)
+moran_results_clean <- moran_results %>%
+mutate(
+  date = as.Date(hour, tz = "Europe/Berlin"),
+  hour = lubridate::hour(hour),
+  moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
+) %>%
+dplyr::select(date, hour, moran_i, p_mc, moran_sig)
 
-  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
+moran_summary_list[[as.character(one_day)]] <- moran_results_clean
 
-  # Convert one_day to proper Date for plotting and filenames
-  day_label <- as.Date(one_day, origin = "1970-01-01")
+# Convert one_day to proper Date for plotting and filenames
+day_label <- as.Date(one_day, origin = "1970-01-01")
 
 moran_summary <- dplyr::bind_rows(moran_summary_list)
 ```
