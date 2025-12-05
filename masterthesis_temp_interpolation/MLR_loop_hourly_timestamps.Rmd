@@ -1,5 +1,5 @@
 ---
-title: "test_regression_approaches_hourly_means"
+title: "MLR_loop_hourly_timestamps"
 author: "Johannes Gruenewald"
 date: "2025-04-30"
 output: html_document
@@ -52,10 +52,10 @@ library(car)
 
 ```{r Load temp data}
 
-# Complete data import and pre-processing
+# Complete data import and pre-processing of the temperature (July 2023)
 
 # Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_year_2023.geojson')
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
 
 # Removes rows where temp is NA
 temp <- temp %>% filter(!is.na(temperature))
@@ -67,46 +67,40 @@ temp <- st_transform(temp, crs="EPSG:32632")
 # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
 temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
 
-# Calculate hour count since epoch, rounded down to current hour
-temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
-
 # Drop all measurement stations which didn't collect data the entire year around
 temp_clean_station <- temp_clean %>%
-  mutate(dateobserved = as.POSIXct(dateobserved, tz = "UTC")) %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
   filter(!entity_id %in% c(
     "hd:DE_Heidelberg_69120_12:WeatherObserved",
     "hd:DE_Heidelberg_69120_34:WeatherObserved",
     "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
     "hd:DE_Heidelberg_46:WeatherObserved"
   ))
 
-# Check if exactly 4 stations were dropped
-length(unique(na.omit(temp_clean$entity_id)))
-length(unique(na.omit(temp_clean_station$entity_id)))
+# Check if exactly 5 stations were dropped
+cat("Number of stations BEFORE cleaning: ",
+    length(unique(na.omit(temp_clean$entity_id))), "\n")
+
+cat("Number of stations AFTER cleaning:  ",
+    length(unique(na.omit(temp_clean_station$entity_id))), "\n")
 
 # Calculate hourly mean temp for cleaned data
 temp_clean_station_hm <- temp_clean_station %>%
-    group_by(entity_id, chour) %>%
-    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
-    mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+    mutate(hour = floor_date(dateobserved, unit = "hour")) %>%   # round down
+    group_by(entity_id, hour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
 ```
 
 --------------------------------------------------------------------------------
 
-```{r Load and preprocess data}
+```{r Load and preprocess covariates}
 
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
-# Import pre-processed hourly means, AOI and station coords
-temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+# Import AOI and station coords
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
-
-# Drop Gaiberg station as it is outside of AOI
-temp_clean_station_hm <- temp_clean_station_hm %>%
-  filter(!entity_id %in% c(
-    "hd:DE_Gaiberg_69251_21:WeatherObserved"
-  ))
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
@@ -118,32 +112,29 @@ ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 tch[tch == 101] <- NA
 
 # Reproject the data
-temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
-hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
-station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+hd_bounds <- st_transform(hd_bounds, crs = st_crs(temp_clean_station_hm))
+station_coords_sf <- st_transform(station_coords_sf, crs = st_crs(temp_clean_station_hm))
 dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 tch <- terra::project(tch, y = crs(temp_clean_station_hm))
 ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
+# Check if any CRS mismatches
 if (!identical(crs(tch), crs(dem))) {
-  stop("CRS mismatch: Canopy height and DEM do not have the same coordinate reference system.")
+  stop("CRS mismatch: Tree canopy height and DEM don't have the same CRS.")
 }
-
 if (!identical(crs(ghs_bh), crs(dem))) {
-  stop("CRS mismatch: Building height and DEM do not have the same coordinate reference system.")
+  stop("CRS mismatch: Building height and DEM don't have the same CRS.")
 }
-
 cat("All covariates share the same CRS.\n")
 
 # Convert to SpatialPointsDataFrame
 station_coords <- as(station_coords_sf, "Spatial")
 
 # Create a Raster Stack for all covariate information
-
-cat("Checking input raster resolutions (x by y):\n")
-cat(sprintf("DEM:    %s\n", paste(terra::res(dem), collapse = " x ")))
-cat(sprintf("TCH:    %s\n", paste(terra::res(tch), collapse = " x ")))
-cat(sprintf("GHS_BH: %s\n\n", paste(terra::res(ghs_bh), collapse = " x ")))
+cat("Checking input raster resolutions in metres:\n")
+cat(sprintf("DEM:    %.2f x %.2f\n", terra::res(dem)[1], terra::res(dem)[2]))
+cat(sprintf("TCH:    %.2f x %.2f\n", terra::res(tch)[1], terra::res(tch)[2]))
+cat(sprintf("GHS_BH: %.2f x %.2f\n\n", terra::res(ghs_bh)[1], terra::res(ghs_bh)[2]))
 
 # Align canopy height and building height to DEM resolution and extent
 tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
@@ -183,13 +174,11 @@ grids_ras <- stack(grids)
 
 # Convert to SpatialGridDataFrame
 grids_sp <- as(grids_ras, "SpatialGridDataFrame")
-
-grids_sp@data
 ```
 
 --------------------------------------------------------------------------------
 
-```{r create_output_folder}
+```{r Create output folder}
 
 output_dir <- "../MLR_07_2023_12days"
 if (!dir.exists(output_dir)) dir.create(output_dir)
@@ -204,9 +193,8 @@ dir.create(lm_dir, showWarnings = FALSE)
 dir.create(lm_dir_z, showWarnings = FALSE)
 dir.create(variogram_dir, showWarnings = FALSE)
 
-# ================================================
-# Datetime helpers (labels & filenames)
-# ================================================
+
+# Datetime helpers
 ts_to_posix <- function(ch) {
   if (inherits(ch, "POSIXt")) {
     # already a datetime — just return it
@@ -265,10 +253,10 @@ for (i in seq_along(timestamps)) {
   dt_local <- ts_to_posix(ts)                     
   dt_lab   <- nice_dt(dt_local)                   
   dt_file  <- file_dt(dt_local)                   
-  cat(sprintf("\n[%d/%d] Processing: hour=%s  (%s)\n", i, total, ts, dt_lab))  
+  cat(sprintf("\n[%d/%d] Processing: timestamp = %s\n", i, total, dt_lab))  
 
   # ------------------------------------------------
-  # STEP 1: Filter hourly data and plot temperature
+  # STEP 1: Filter hourly data and extract covariates from spatial grid
   # ------------------------------------------------
   
   sel_temp_hm <- temp_clean_station_hm %>%
@@ -280,29 +268,7 @@ for (i in seq_along(timestamps)) {
     cat("  → skipped (n < 20)\n")                          
     next                                                         
   }
-  
-  # Append the selected temperature data to full dataset
-  all_temp_data <- rbind(all_temp_data, sel_temp_hm)
-  
-  # Generate line plot showing hourly mean temperature for each station
-  # across the time range covered so far in the loop
-  p_all <- ggplot(all_temp_data, aes(x = hour, y = hm_temp, color = entity_id, group = entity_id)) +  
-    geom_line() +
-    geom_point(size = 1) +
-    labs(title = "Hourly Mean Temperature at Each Station",        
-         x = "Date & Hour (Europe/Berlin)", y = "Mean Temperature (°C)", color = "Station") + 
-    scale_x_datetime(date_labels = "%d.%m\n%H:%M", date_breaks = "12 hours") +              
-    theme_minimal(base_size = 12) +
-    theme(axis.text.x = element_text(angle = 0, hjust = 0.5))                                  
-  
-  # Save the temperature plot
-  ggsave(file.path(output_dir, "all_stations_hourly_mean_temperature.png"),
-         plot = p_all, width = 10, height = 6, dpi = 300)
 
-  # ------------------------------------------------
-  # STEP 2: Add covariates (elev, canopy, bldg) from grid
-  # ------------------------------------------------
-  
   # Convert Spatial object to RasterBrick
   r_brick <- brick(grids_sp)
   
@@ -318,11 +284,11 @@ for (i in seq_along(timestamps)) {
   # Combine the point data with the extracted raster values
   temp_shm.ex <- cbind(as.data.frame(sel_temp_hm), extracted_vals)
   
-  # Choose which covariates to use (must match layer names from your raster)
+  # Choose the covariates
   covars <- c("elevation", "canopy_height", "building_height")
   covars <- intersect(covars, names(temp_shm.ex))
   
-  # Safe z-scaling within THIS timestamp (across stations present now)
+  # Safe z-scaling within timestamp
   safe_z <- function(x) {
     m <- mean(x, na.rm = TRUE)
     s <- sd(x,   na.rm = TRUE)
@@ -335,21 +301,21 @@ for (i in seq_along(timestamps)) {
     temp_shm.ex[[paste0(nm, "_z")]] <- safe_z(temp_shm.ex[[nm]])
   }
   
-  # Keep the z parameters used THIS HOUR
+  # Keep the z parameters
   z_params_this <- data.frame(
     timestamp = ts,
     covariate = covars,
     mean      = sapply(temp_shm.ex[covars], function(v) mean(v, na.rm = TRUE)),
     sd        = sapply(temp_shm.ex[covars], function(v) sd(v,   na.rm = TRUE))
   )
-  # Append to a csv if you like:
+  # Append to csv
   write.table(z_params_this, file = file.path(lm_dir_z, "z_params_by_timestamp.csv"),
               sep = ",", row.names = FALSE,
               col.names = !file.exists(file.path(lm_dir_z,"z_params_by_timestamp.csv")),
               append = TRUE)
   
   # ------------------------------------------------
-  # STEP 3: Fit linear model and prepare spatial data
+  # STEP 2: Fit MLR
   # ------------------------------------------------
   
   # Fit multiple linear regression model
@@ -380,7 +346,7 @@ for (i in seq_along(timestamps)) {
     mlr_residuals_all <- dplyr::bind_rows(mlr_residuals_all, mlr_residuals_df)
   }
     
-  # Extract metrics
+  # Collect regression metrics
   model_metrics <- data.frame(
     timestamp      = ts,
     r_squared      = summary_lm$r.squared,
@@ -397,28 +363,23 @@ for (i in seq_along(timestamps)) {
     BIC            = BIC(reg_model)
   )
   
-  write.table(
-    model_metrics,
-    file = metrics_file,
-    sep = ",",
-    row.names = FALSE,
-    col.names = !file.exists(metrics_file),
-    append = TRUE
-  )
+  write.table(model_metrics, file = metrics_file, sep = ",", row.names = FALSE,
+              col.names = !file.exists(metrics_file), append = TRUE)
 
-  # Save model's residuals back into original df as new column
+  # Attach residuals to dataset and convert to sf for spatial operations
   temp_shm.ex$residuals <- resid
-  
-  # Convert df into spatial object using existing geometry and
-  # Convert MULTIPOINT geometries to POINT
   temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
   
-  # z-MLR: fit with standardized predictors
+  # ------------------------------------------------
+  # STEP 3: Fit z-standardized MLR
+  # ------------------------------------------------
+  
+  # Fit MLR with z-standardized predictors
   reg_model_z  <- lm(hm_temp ~ elevation_z + canopy_height_z + building_height_z,
                      data = temp_shm.ex)
   summary_lm_z <- summary(reg_model_z)
   
-  # predictions & residuals for z-MLR (distinct names to avoid clobbering)
+  # Predictions & Residuals for z-MLR
   pred_z  <- predict(reg_model_z, temp_shm.ex)
   resid_z <- temp_shm.ex$hm_temp - pred_z
   
@@ -439,16 +400,8 @@ for (i in seq_along(timestamps)) {
     BIC            = BIC(reg_model_z)
   )
   
-  write.table(
-    model_metrics_z,
-    file = metrics_file_z,
-    sep = ",",
-    row.names = FALSE,
-    col.names = !file.exists(metrics_file_z),
-    append = TRUE
-  )
-  
-  # ---- Your requested additions: robust SEs, β (unitless), relative importance ----
+  write.table(model_metrics_z, file = metrics_file_z, sep = ",", 
+              row.names = FALSE, col.names = !file.exists(metrics_file_z), append = TRUE)
   
   # robust SEs (HC3) for safer p-values
   rob <- coeftest(reg_model_z, vcov = vcovHC(reg_model_z, type = "HC3"))
@@ -473,24 +426,11 @@ for (i in seq_along(timestamps)) {
   coef_df$lmg <- imp$lmg[match(coef_df$term, names(imp$lmg))]  # sums to 1 per timestamp
   
   # append to tidy CSV
-  write.table(
-    coef_df,
-    file = coef_file_z,
-    sep = ",",
-    row.names = FALSE,
-    col.names = !file.exists(coef_file_z),
-    append = TRUE
-  )
+  write.table(coef_df, file = coef_file_z, sep = ",", row.names = FALSE,
+              col.names = !file.exists(coef_file_z), append = TRUE)
 
   # ------------------------------------------------
-  # STEP 4: Fit GAM model and prepare spatial data
-  # ------------------------------------------------
-  
-  # CONTINUE WORKING HERE
-  
-  
-  # ------------------------------------------------
-  # STEP 5: Compute anisotropy & fit directional variogram
+  # STEP 4: Compute variogram and fit model
   # ------------------------------------------------
   
   # Compute empirical variogram map of model residuals
@@ -540,11 +480,8 @@ for (i in seq_along(timestamps)) {
          plot.nu = FALSE, cex = 1.5, pch = "+", col = "black")
   )
   dev.off()
-  
-  # ------------------------------------------------
-  # STEP 6: Progress bar
-  # ------------------------------------------------  
-  
+    
+  # Update progress bar
   completed <- completed + 1L 
   setTxtProgressBar(pb, completed)
   cat("\n")
@@ -557,6 +494,7 @@ close(pb)
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
             completed, total, skipped))                         
 
+# Save MLR metrics
 mlr_residuals_file <- file.path(output_dir, "mlr_residuals_all.csv")
 if (exists("mlr_residuals_all") && nrow(mlr_residuals_all) > 0) {
   mlr_residuals_all$datetime_local <- ts_to_posix(mlr_residuals_all$timestamp)
