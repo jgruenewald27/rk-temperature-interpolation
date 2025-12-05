@@ -11,4 +11,4 @@ This study incorporates high-temporal-resolution air temperature data from weath
 
 ## Example Regression-Kriging Temperature Surface for the Study Area
 
-![Regression Kriging Temperature Surface](/RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction_map.png)
+![Regression Kriging Temperature Surface](RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction_map.png)
