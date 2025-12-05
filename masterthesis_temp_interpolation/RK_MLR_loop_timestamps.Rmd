@@ -560,7 +560,7 @@ close(pb)
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",       
             completed, total, skipped))                         
 
-# Save linear model metrics
+# Save MLR metrics
 metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
 if (exists("lm_metrics_all")) {                                     
   lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
