@@ -1,0 +1,345 @@
+---
+title: "MLR_model_results_plots"
+output: html_document
+date: "2025-12-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Packages}
+
+# Core data manipulation
+library(tidyverse)
+library(lubridate)
+
+# Plotting
+library(ggplot2)
+library(ggforce)
+library(scales)
+
+# Spatial data
+library(terra)
+library(spdep)
+
+# RMarkdown utilities
+library(knitr)
+library(rmarkdown)
+```
+
+Plot the outputs
+
+```{r Analyse MLR metrics}
+
+# Read CSV with MLR metrics
+lm_metrics <- read.csv("../MLR_07_2023_12days/lm_metrics/lm_model_performance_summary.csv")
+
+lm_metrics <- lm_metrics %>%
+    mutate(
+      timestamp = if_else(nchar(timestamp) == 10, 
+                          paste0(timestamp, " 00:00:00"), timestamp),
+      timestamp = as.POSIXct(timestamp, 
+                             format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+      date = as.Date(timestamp, tz = "Europe/Berlin"),
+      hour = lubridate::hour(timestamp)
+  )
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+
+# Plot: Daily Evaluation of Multiple Linear Regression Model Performance
+p_lm <- ggplot(lm_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
+  # Lines and points for model metrics
+  geom_line(linewidth = 1.2) +
+  geom_hline(
+    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),
+    color = "grey60"
+  ) +
+  geom_point(size = 1.8) +
+  # Facet by date
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +
+  # Color and linetype scales
+  scale_color_manual(
+    values = c(
+      "r_squared"     = "#6699CC",
+      "adj_r_squared" = "#CC6677"
+    ),
+    labels = c(
+      "r_squared"     = expression(R^2),
+      "adj_r_squared" = expression(Adjusted~R^2)
+    )
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Fit (R² = 1)" = "dotted")
+  ) +
+  # Labels
+  labs(
+    title    = "Daily Evaluation of Multiple Linear Regression Model Performance",
+    subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Metric Value",
+    color    = "Metrics"
+  ) +
+  # X-axis ticks
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  # Theme
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position    = "top",
+    legend.box         = "horizontal",
+    panel.grid.minor   = element_blank(),
+    panel.spacing      = unit(0.8, "lines"),
+    strip.background   = element_rect(fill = "grey90", color = NA),
+    strip.text         = element_text(face = "bold")
+  )
+
+# Show plot
+p_lm
+
+# Save plot
+#ggsave("../regression_tests/lm_metrics_r2_adjr2_by_day_04_2023.png", plot = p_lm, width = 12, height = 8, dpi = 300)
+```
+
+--------------------------------------------------------------------------------
+
+How well do the environmental covariates describe hourly mean temperature
+
+Following plot can answer this research question:
+- [ ] Wie gut beschreiben die covariates die hourly mean temperature zu bestimmten timestamps 
+- [ ] Was sind mögliche Erklärungen für diese patterns? Welche Prozesse können zu diesen patterns führen?
+
+```{r}
+# Read and prepare data
+coef_all <- read.csv("../MLR_07_2023_12days/lm_metrics_z/lm_z_coefficients_by_timestamp.csv")
+fit <- read.csv("../MLR_07_2023_12days/lm_metrics_z/lm_z_model_performance_summary.csv")
+
+fit <- fit %>%
+  mutate(
+    timestamp = if_else(
+      nchar(timestamp) == 10, paste0(timestamp, " 00:00:00"), timestamp
+    ),
+    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    month = month(timestamp),
+    year = year(timestamp)
+  ) %>%
+  filter(year == 2023, month == 7)
+
+coef_all <- coef_all %>%
+  mutate(
+    timestamp = if_else(
+      nchar(timestamp) == 10,
+      paste0(timestamp, " 00:00:00"),
+      timestamp
+    ),
+    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    date = as.Date(format(timestamp, tz = "Europe/Berlin")),
+    hour  = hour(timestamp),
+    month = month(timestamp),
+    year  = year(timestamp)
+  ) %>%
+  filter(month == 7 & year == 2023) %>%
+  left_join(fit %>% select(timestamp, r_squared), by = "timestamp")
+
+# Determine pagination structure
+days_per_page <- 12
+n_pages <- ceiling(length(unique(coef_all$date)) / days_per_page)
+
+# Output directory
+output_plots <- "../plots_report"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Paginated plotting loop
+for (i in seq_len(n_pages)) {
+  p_cov <- ggplot(coef_all, aes(x = hour)) +
+    geom_area(aes(y = lmg, fill = term), position = "fill", alpha = 0.85) +
+    geom_line(aes(y = r_squared, color = "Model R²"), linewidth = 0.9) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
+    scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+    scale_y_continuous(
+      breaks = c(0, 0.25, 0.50, 0.75, 1.00),
+      labels = scales::percent_format(accuracy = 1),
+      sec.axis = sec_axis(~ ., name = "Model R²")
+    ) +
+    theme(
+      panel.grid = element_blank(),
+      panel.grid.major.y = element_line(color = "grey85")
+    ) +
+    scale_fill_manual(
+      name = "Covariates (z-standardised)",
+      values = c(
+        "building_height_z" = "darkorange3",
+        "canopy_height_z"   = "darkolivegreen",
+        "elevation_z"       = "burlywood2"
+      ),
+      labels = c(
+        "building_height_z" = "Building Height",
+        "canopy_height_z"   = "Canopy Height",
+        "elevation_z"       = "Elevation"
+      )
+    ) +
+    scale_color_manual(
+      name = "",  # we'll merge this with the fill legend
+      values = c("Model R²" = "black"),
+      guide = guide_legend(override.aes = list(linetype = 1, fill = NA))
+    ) +
+    guides(
+      fill = guide_legend(order = 1),
+      color = guide_legend(order = 2)
+    ) +
+    labs(
+      title    = sprintf("Daily Variation of LMG-Based Covariate Importance\nin Hourly Multiple Linear Regression Models"),
+      caption = "LMG = Lindeman–Merenda–Gold relative importance measure.  
+Each hour was modelled using a separate multiple linear regression with z-standardised covariates. 
+Areas show the proportional contribution of each covariate to the total model R² for that hour.",
+      x = "Hour of the Day",
+      y = "Share of R² (LMG, Sum = 1)"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "bottom",
+      legend.title     = element_text(face = "bold"),
+      legend.key.width = unit(2, "lines"),
+      strip.text       = element_text(face = "bold", size = 12),
+      panel.spacing    = unit(0.8, "lines"),
+      plot.title       = element_text(face = "bold", size = 20, hjust = 0.5, 
+                                      margin = margin(t = 10, b = 10)),
+      plot.subtitle    = element_text(size = 12, hjust = 0.5)
+    ) +
+    theme(
+      plot.caption.position = "plot", 
+      plot.caption = element_text(hjust = 0, margin = margin(t = 20))
+    ) +
+    theme(
+      panel.grid.major.x = element_line(color = "grey90"),  
+      panel.grid.major.y = element_line(color = "grey90"), 
+      panel.grid.minor = element_blank()                   
+    )
+
+  # Save each page
+  ggsave(
+    filename = file.path(output_plots, sprintf("covariate_importance.png")),
+    plot = p_cov,
+    width = 12, height = 10, dpi = 300
+  )
+}
+
+p_cov
+```
+
+The figure illustrates how the relative influence of topography, vegetation, and urban structure on hourly mean temperature varies over the course of each day.
+
+Overall Canopy height has the smallest impact of the three covariates on the hourly mean temperature predictions. Across the entire day, elevation has the biggest impact with building height having a strong influence on hourly mean temperature during nighttime.
+
+The following figure will answer this research questions:
+- [ ] Bei welchen timestamps sind die covariates besonders signifikant? Gibt es da bestimmte patterns bei bestimmten klimatischen Bedingungen oder täglich widerkehrende Regelmäßigkeiten?
+
+```{r}
+# Output directory for saving figures
+output_pval <- "../plots_report"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Categorize p-values before plotting
+coef_all <- coef_all %>%
+  mutate(
+    p_category = case_when(
+      p_robust < 0.001 ~ "< 0.001",
+      p_robust < 0.01  ~ "< 0.01",
+      p_robust < 0.05  ~ "< 0.05",
+      TRUE             ~ "≥ 0.05 (n.s.)"
+    )
+  )
+
+coef_all <- coef_all %>%
+  left_join(moran_summary, by = c("date", "hour"))
+
+# One row per (date, hour), keeping only hours with significant Moran's I
+moran_band <- coef_all %>%
+  dplyr::distinct(date, hour, moran_sig.y) %>%
+  dplyr::filter(moran_sig.y)   # TRUE = significant spatial autocorrelation
+
+
+for (i in seq_len(n_pages)) {
+  p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_category)) +
+    # PLOT CONTENT
+    geom_tile(color = "grey85") +
+    geom_rect(
+      data = moran_band,
+      aes(
+        xmin = hour - 0.5, xmax = hour + 0.5,
+        ymin = -Inf, ymax = Inf,
+        color = "Moran’s I (p < 0.05)"
+      ),
+      inherit.aes = FALSE,
+      fill = NA,
+      linewidth = 0.4,
+      alpha = 0.4
+    ) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
+    scale_y_discrete(labels = c(
+      "building_height_z" = "Building Height",
+      "canopy_height_z"   = "Canopy Height",
+      "elevation_z"       = "Elevation"
+    )) +
+    scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+    scale_fill_manual(
+      name = "Significance (robust p-value)",
+      values = c(
+        "< 0.001" = "#440154",
+        "< 0.01"  = "#31688e",
+        "< 0.05"  = "#35b779",
+        "≥ 0.05 (n.s.)" = "grey85"
+      )
+    ) +
+    scale_color_manual(
+      name = "",
+      values = c("Moran’s I (p < 0.05)" = "firebrick3")
+    ) +
+    labs(
+      x = "Hour of the Day",
+      y = "Covariates",
+      title = "Hourly Robust Significance of Model Covariates",
+      caption = "Robust p-values are based on hourly multiple linear regression models with z-standardised covariates.
+Darker colors represent higher statistical significance. 
+Red outlines highlight hours where regression residuals show significant spatial autocorrelation (Moran’s I, p < 0.05)."
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title = element_text(
+        face = "bold", size = 20, hjust = 0.5,
+        margin = margin(t = 10, b = 10)
+      ),
+      plot.subtitle = element_text(size = 12, hjust = 0.5),
+      plot.caption.position = "plot",
+      plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
+      strip.text = element_text(face = "bold", size = 12),
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold"),
+      legend.key.width = unit(2, "lines"),
+      legend.text = element_text(size = 11),
+      legend.box = "horizontal",
+      panel.spacing = unit(0.8, "lines"),
+      panel.grid = element_blank(),
+      panel.grid.major.x = element_line(color = "grey90"),
+      panel.grid.major.y = element_line(color = "grey90"),
+      panel.grid.minor = element_blank()
+    ) +
+    guides(
+      fill = guide_legend(order = 1),
+      color = guide_legend(order = 2,
+                           override.aes = list(fill = NA, linewidth = 0.9, size = 5))
+    )
+
+
+  # Save each page
+  ggsave(
+    filename = file.path(output_pval, sprintf("covariate_pvalues.png")),
+    plot = p_pval,
+    width = 12, height = 10, dpi = 300
+  )
+}
+```
