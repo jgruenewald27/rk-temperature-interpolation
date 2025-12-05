@@ -238,7 +238,7 @@ df_env <- df_env %>%
   mutate(hour = floor_date(dateobserved, "hour"))
 
 # Calculating hourly means of weather variables
-df_hourly_means <- df_env %>%
+weather_hourly_means <- df_env %>%
   group_by(hour) %>%
   summarise(
     temperature_mean       = mean(temperature, na.rm = TRUE),
@@ -269,7 +269,7 @@ rk_cv_metrics_join <- rk_cv_metrics %>%
 # Join RMSE info and weather variables using timestamp
 cv_weather_combined <- rk_cv_metrics_join %>%
   left_join(
-    df_hourly_means,
+    weather_hourly_means,
     by = c("hour_ts" = "hour")
   )
 ```
@@ -365,6 +365,8 @@ ggsave(
 )
 ```
 
+--------------------------------------------------------------------------------
+
 ```{r}
 p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
     # Temperature as histogram-like bars in the background
@@ -424,4 +426,155 @@ p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)
 
 p_cv
 
+```
+
+--------------------------------------------------------------------------------
+
+Plots to analyse model performance metrics for more than 12 days
+-> Likely not in final thesis as plots might be too crowded/the individual plots 
+too small. Maybe something for the Appendix if they contain some additional value
+
+```{r Analyse MLR metrics}
+
+# Number of days per plot
+days_per_page <- 12  
+
+# Count total pages needed
+n_pages <- ceiling(length(unique(lm_df_plot$date)) / days_per_page)
+
+# Loop over pages and plot mlr metrics
+for (i in seq_len(n_pages)) {
+  p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+    geom_line(linewidth = 1.2) +
+    geom_hline(aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"), color = "grey60") +
+    geom_point(size = 1.8) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed", page = i) +  
+    scale_color_manual(
+      values = c("r_squared" = "#6699CC", "adj_r_squared" = "#CC6677"),
+      labels = c("r_squared" = expression(R^2), "adj_r_squared" = expression(Adjusted~R^2))
+    ) +
+    scale_linetype_manual(name = "", values = c("Perfect Fit (R² = 1)" = "dotted")) +
+    labs(
+      title    = sprintf("Daily Evaluation of Multiple Linear Regression Model Performance (Page %d/%d)", i, n_pages),
+      subtitle = "Hourly R² and Adjusted R² values from models predicting hourly mean temperature",
+      x = "Hour of the Day", y = "Metric Value", color = "Metrics"
+    ) +
+    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "top",
+      legend.box       = "horizontal",
+      panel.grid.minor = element_blank(),
+      panel.spacing    = unit(0.8, "lines"),
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text       = element_text(face = "bold")
+    )
+
+  # Save plot to output directory
+  ggsave(
+    filename = file.path(output_dir, sprintf("lm_daily_eval_07_2023_page_%02d.png", i)),
+    plot = p_lm,
+    width = 12, height = 10, dpi = 300
+  )
+}
+```
+
+```{r Analyse RK LOOCV metrics}
+
+# Loop over pages and plot cv metrics
+for (i in seq_len(n_pages)) {
+  p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+    geom_line(linewidth = 1.2) +
+    geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
+    geom_point(size = 1.8) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed", page = i) +  # 12 days per plot
+    scale_color_manual(
+      values = c(
+        "rk_cv_rmse" = "#6699CC",
+        "rk_cv_mae"  = "#CC6677"
+      ),
+      labels = c(
+        "rk_cv_rmse" = "Root Mean Square Error (RMSE)",
+        "rk_cv_mae"  = "Mean Absolute Error (MAE)"
+      )
+    ) +
+    scale_linetype_manual(
+      name = "",
+      values = c("Perfect Prediction (Error = 0)" = "dotted")
+    ) +
+    labs(
+      title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
+      subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
+      x        = "Hour of the Day",
+      y        = "Error Metric [°C]",
+      color    = "Metrics"
+    ) +
+    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "top",
+      legend.box       = "horizontal",
+      panel.grid.minor = element_blank(),
+      panel.spacing    = unit(0.8, "lines"),
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text       = element_text(face = "bold")
+    )
+
+  # Save plot to output directory
+  ggsave(
+    filename = file.path(output_dir, sprintf("cv_metrics_07_2023_by_day_page_%02d.png", i)),
+    plot = p_cv,
+    width = 12, height = 8, dpi = 300
+  )
+}
+```
+
+```{r Analyse RK metrics}
+
+# Loop over pages and plot rk metrics
+for (i in seq_len(n_pages)) {
+  p_rk <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+    geom_line(linewidth = 1.2) +
+    geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
+    geom_point(size = 1.8) +
+    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed", page = i) +  # 12 days/page
+    scale_color_manual(
+      values = c(
+        "rk_rmse" = "#6699CC",
+        "rk_mae"  = "#CC6677"
+      ),
+      labels = c(
+        "rk_rmse" = "Root Mean Square Error (RMSE)",
+        "rk_mae"  = "Mean Absolute Error (MAE)"
+      )
+    ) +
+    scale_linetype_manual(
+      name = "",
+      values = c("Perfect Prediction (Error = 0)" = "dotted")
+    ) +
+    labs(
+      title    = sprintf("Daily Evaluation of the Regression-Kriging Model Performance Metrics (Page %d/%d)", i, n_pages),
+      subtitle = "Hourly RMSE and MAE values from models predicting hourly mean temperature",
+      x        = "Hour of the Day",
+      y        = "Error Metric [°C]",
+      color    = "Metrics"
+    ) +
+    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+    theme_minimal(base_size = 14) +
+    theme(
+      legend.position  = "top",
+      legend.box       = "horizontal",
+      panel.grid.minor = element_blank(),
+      panel.spacing    = unit(0.8, "lines"),
+      strip.background = element_rect(fill = "grey90", color = NA),
+      strip.text       = element_text(face = "bold")
+    )
+
+  # Save plot to output directory
+  ggsave(
+    filename = file.path(output_dir, sprintf("rk_metrics_07_2023_by_day_page_%02d.png", i)),
+    plot = p_rk,
+    width = 12, height = 8, dpi = 300
+  )
+}
 ```
