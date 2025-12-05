@@ -9,6 +9,6 @@ This study incorporates high-temporal-resolution air temperature data from weath
 - Which covariates are most influential in explaining temperature variability, and how does their significance vary across different times of day and weather conditions?
 - What role do data quality and the spatial distribution of temperature measurements play in shaping the performance of interpolation models?
 
-## First draft of the workflow
+## Example Regression-Kriging Temperature Surface for the Study Area
 
-![Regression Kriging Workflow](plots/regression_kriging_workflow.png)
+![Regression Kriging Temperature Surface](/RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction_map.png)
