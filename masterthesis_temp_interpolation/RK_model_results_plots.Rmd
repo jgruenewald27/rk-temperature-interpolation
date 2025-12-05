@@ -8,6 +8,22 @@ date: "2025-12-05"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r Load Required Packages}
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+library(lubridate)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(ggforce)
+library(viridis)
+
+# Spatial Reading
+library(sf)
+```
+
 --------------------------------------------------------------------------------
 
 Plots to analyse model performance metrics for 12 days
