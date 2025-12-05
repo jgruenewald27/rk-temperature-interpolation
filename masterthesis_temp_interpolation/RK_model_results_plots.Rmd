@@ -28,14 +28,10 @@ rk_metrics <- read.csv("../RK_07_2023_12days/rk_metrics.csv",
 preprocess_metrics <- function(df) {
   df %>%
     mutate(
-      # If the timestamp is only "YYYY-MM-DD", append "00:00:00"
       timestamp = if_else(nchar(timestamp) == 10, 
                           paste0(timestamp, " 00:00:00"), timestamp),
-
-      # Convert to POSIXct
       timestamp = as.POSIXct(timestamp, 
                              format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
-      # Extract date and hour
       date = as.Date(timestamp, tz = "Europe/Berlin"),
       hour = lubridate::hour(timestamp)
     )
