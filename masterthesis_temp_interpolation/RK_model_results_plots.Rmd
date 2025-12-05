@@ -80,7 +80,7 @@ rk_metrics_long <- rk_metrics %>%
 ```{r Analyse MLR metrics 12 days}
 
 # Daily Evaluation of MLR Model Performance
-p_lm <- ggplot(lm_df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
+p_lm <- ggplot(lm_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
   geom_line(linewidth = 1.2) +
   geom_hline(aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),color = "grey60") +
   geom_point(size = 1.5, alpha = 0.7) +
@@ -321,16 +321,24 @@ rel_rmse_weather <- ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
   theme_minimal(base_size = 14) +
   labs(
     title = "Relationship Between RK LOOCV RMSE and Hourly Mean Weather Variables",
-    subtitle = "Hourly means (1–12 July 2023) compared against RK model error",
+    subtitle = "Hourly means (1–12 July 2023) compared against RK LOOCV model error",
     x = "Weather Variable Value",
     y = "RMSE [°C]"
+  ) +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
   )
 
 rel_rmse_weather
 
 # Save the output plot
 ggsave(
-  filename = file.path("../plots/hourly_weather_relationship_rmse.png"),
+  filename = file.path("../plots_report/relationship_hourly_weather_rmse.png"),
   plot = rel_rmse_weather,
   width = 12, height = 8, dpi = 300
 )
@@ -347,7 +355,7 @@ di_weather <- ggplot(df_long, aes(
     size  = rk_cv_rmse
 )) +
   geom_point(alpha = 0.7, size = 1.5) +
-  scale_color_viridis_c(option = "C") +
+  scale_color_viridis_c(option = "C", direction = -1) +
   scale_x_continuous(
     breaks = c(0, 6, 12, 18, 24),
     limits = c(0, 24)
@@ -363,6 +371,10 @@ di_weather <- ggplot(df_long, aes(
     size  = "RMSE [°C]"
   ) +
   theme(
+    legend.position = "bottom",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold"),
     plot.title = element_text(hjust = 0.5),
     plot.subtitle = element_text(hjust = 0.5)
   )
@@ -371,73 +383,10 @@ di_weather
 
 # Save the output plot
 ggsave(
-  filename = file.path("../plots/hourly_weather_rk_loocv_rmse.png"),
+  filename = file.path("../plots_report/hourly_weather_rk_loocv_rmse.png"),
   plot = di_weather,
   width = 12, height = 8, dpi = 300
 )
-```
-
---------------------------------------------------------------------------------
-
-```{r}
-p_cv <- ggplot(df_plot, aes(x = hour, y = value, color = metric, group = metric)) +
-    # Temperature as histogram-like bars in the background
-  geom_col(
-    data = df_hourly_temp,
-    aes(
-      x = hour_num,
-      y = temp_scaled,
-      fill = temp_mean
-    ),
-    inherit.aes = FALSE,
-    alpha = 0.45,
-    width = 0.9
-  ) +
-  
-  # Temperature color ramp
-  scale_fill_gradientn(
-    colours = viridis::viridis(100, option = "C"),
-    name = "Mean Temp (°C)"
-  ) +
-  
-    geom_line(linewidth = 1.2) +
-    geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
-    geom_point(size = 1.8) +
-    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +  
-    scale_color_manual(
-      values = c(
-        "rk_cv_rmse" = "#6699CC",
-        "rk_cv_mae"  = "#CC6677"
-      ),
-      labels = c(
-        "rk_cv_rmse" = "Root Mean Square Error (RMSE)",
-        "rk_cv_mae"  = "Mean Absolute Error (MAE)"
-      )
-    ) +
-    scale_linetype_manual(
-      name = "",
-      values = c("Perfect Prediction (Error = 0)" = "dotted")
-    ) +
-    labs(
-      title    = "Daily Evaluation of the Regression-Kriging Leave-One-Out Cross-Validation Metrics",
-      subtitle = "Hourly RMSE and MAE values from LOOCV of models predicting hourly mean temperature",
-      x        = "Hour of the Day",
-      y        = "Error Metric [°C]",
-      color    = "Metrics"
-    ) +
-    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-    theme_minimal(base_size = 14) +
-    theme(
-      legend.position  = "top",
-      legend.box       = "horizontal",
-      panel.grid.minor = element_blank(),
-      panel.spacing    = unit(0.8, "lines"),
-      strip.background = element_rect(fill = "grey90", color = NA),
-      strip.text       = element_text(face = "bold")
-    )
-
-p_cv
-
 ```
 
 --------------------------------------------------------------------------------
