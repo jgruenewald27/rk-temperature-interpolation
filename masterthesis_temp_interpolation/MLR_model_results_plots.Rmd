@@ -235,8 +235,162 @@ The figure illustrates how the relative influence of topography, vegetation, and
 
 Overall Canopy height has the smallest impact of the three covariates on the hourly mean temperature predictions. Across the entire day, elevation has the biggest impact with building height having a strong influence on hourly mean temperature during nighttime.
 
+--------------------------------------------------------------------------------
+
 The following figure will answer this research questions:
 - [ ] Bei welchen timestamps sind die covariates besonders signifikant? Gibt es da bestimmte patterns bei bestimmten klimatischen Bedingungen oder täglich widerkehrende Regelmäßigkeiten?
+
+Spatial Autocorrelation of MLR model residuals
+
+```{r Loop to calculate Morans I on regression residuals}
+# Import residuals
+mlr_residuals <- read.csv("../MLR_07_2023_12days/mlr_residuals_all.csv",
+  stringsAsFactors = FALSE)
+
+# Extract coordinates from station layer
+station_coords_df <- station_coords_sf %>%
+  st_drop_geometry() %>%
+  mutate(
+    lon = st_coordinates(station_coords_sf)[, 1],
+    lat = st_coordinates(station_coords_sf)[, 2]
+  ) %>%
+  select(entity_id, lon, lat)
+
+# Parse timestamps and join coordinates
+mlr_residuals <- mlr_residuals %>%
+  mutate(
+    hour = suppressWarnings(ymd_hms(timestamp, tz = "Europe/Berlin")),
+    hour = ifelse(is.na(hour), ymd(timestamp, tz = "Europe/Berlin"), hour),
+    hour = as.POSIXct(hour, origin = "1970-01-01", tz = "Europe/Berlin"),
+    day  = as.Date(hour, tz = "Europe/Berlin")
+  ) %>%
+  left_join(station_coords_df, by = "entity_id")
+
+# Convert to sf object with CRS 32632
+mlr_residuals_sf <- st_as_sf(
+  mlr_residuals,
+  coords = c("lon", "lat"),
+  crs = 32632,      
+  remove = FALSE
+)
+
+# Loop across days using the sf version
+month_start <- as.Date("2023-07-01")
+month_end   <- as.Date("2023-07-12")
+all_days    <- seq(month_start, month_end, by = "day")
+
+moran_summary_list <- list()
+
+for (one_day in all_days) {
+  message("Processing ", one_day)
+
+  # Filter to that day directly from sf object
+  df_day <- mlr_residuals_sf %>%
+    filter(day == one_day)
+
+  if (nrow(df_day) == 0) next
+
+  # Compute Moran’s I for each timestamp
+  moran_results <- df_day %>%
+    group_split(hour) %>%
+    map_dfr(function(df_slice) {
+
+      xy <- st_coordinates(df_slice)
+
+      knn <- knearneigh(xy, k = 8)
+      nb  <- knn2nb(knn)
+      lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+      mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
+      mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
+      q  <- quantile(mc$res, c(0.025, 0.975))
+
+      tibble(
+        hour     = unique(df_slice$hour),
+        moran_i  = mt$estimate[["Moran I statistic"]],
+        expected = mt$estimate[["Expectation"]],
+        p_asym   = mt$p.value,
+        p_mc     = mc$p.value,
+        lo95     = q[1],
+        hi95     = q[2]
+      )
+    })
+  
+  moran_results_clean <- moran_results %>%
+  mutate(
+    date = as.Date(hour, tz = "Europe/Berlin"),
+    hour = lubridate::hour(hour),
+    moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
+  ) %>%
+  select(date, hour, moran_i, p_mc, moran_sig)
+
+  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
+
+  # Convert one_day to proper Date for plotting and filenames
+  day_label <- as.Date(one_day, origin = "1970-01-01")
+  
+  # Plot
+  p_moran <- ggplot(moran_results, aes(x = hour, y = moran_i)) +
+    geom_ribbon(aes(ymin = lo95, ymax = hi95, fill = "95% confidence envelope"), alpha = 0.5) +
+    geom_hline(
+      data = data.frame(y = 0, label = "No autocorrelation"),
+      aes(yintercept = y, linetype = label),
+      color = "black"
+    ) +
+    geom_hline(
+      data = data.frame(y = unique(moran_results$expected), label = "Expected under randomness"),
+      aes(yintercept = y, linetype = label),
+      color = "black"
+    ) +
+    geom_line(color = "black", linewidth = 0.6) +
+    geom_point(aes(color = p_mc < 0.05), size = 2.8) +
+    scale_color_manual(
+      name = "Significance (p < 0.05)",
+      values = c("TRUE" = "#440154", "FALSE" = "#35b779"),
+      labels = c("TRUE" = "Significant", "FALSE" = "Not significant")
+    ) +
+    scale_fill_manual(name = NULL, values = c("95% confidence envelope" = "grey80")) +
+    scale_linetype_manual(
+      name = NULL,
+      values = c("No autocorrelation" = "dashed",
+                 "Expected under randomness" = "dotted")
+    ) +
+    scale_x_datetime(
+      date_labels = "%H:%M",
+      date_breaks = "6 hours",
+      expand = expansion(mult = c(0, 0.02))
+    ) +
+    coord_cartesian(ylim = c(-0.2, 0.6)) +
+    labs(
+      title = "Moran’s I of Regression Residuals",
+      subtitle = paste("Date:", format(day_label, "%Y-%m-%d")),
+      x = "Hour of Day",
+      y = "Moran’s I"
+    ) +
+    guides(
+      color = guide_legend(order = 1),
+      fill = guide_legend(order = 2, override.aes = list(alpha = 0.5)),
+      linetype = guide_legend(order = 3)
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.title = element_text(size = 6, face = "bold"),
+      legend.text = element_text(size = 6),
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(size = 11, color = "grey20"),
+      panel.grid.minor = element_blank()
+    )
+
+  # Save plot
+  out_file <- file.path("../plots/moransI_residuals", paste0("moransI_residuals_", one_day, ".png"))
+  ggsave(out_file, p_moran, width = 8, height = 5, dpi = 300)
+}
+
+moran_summary <- dplyr::bind_rows(moran_summary_list)
+```
 
 ```{r}
 # Output directory for saving figures
