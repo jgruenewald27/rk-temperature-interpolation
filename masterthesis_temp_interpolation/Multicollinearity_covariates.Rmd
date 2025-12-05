@@ -295,7 +295,6 @@ p_cov <- ggplot(df_long, aes(x = value)) +
 p_cov
 ```
 
-
 ------------------------------------------------------------------------
 
 Calculate correlation between the three covariates and the dependent variable temperature using a linear regression model
@@ -423,33 +422,12 @@ gam(mean_temp ~ s(canopy_height, k = 5), data = station_df)
 
 ------------------------------------------------------------------------
 
-Multicollinearity
-
-Test for simple Linear Regression Model
-
-In regression analysis, multicollinearity occurs when two or more predictor variables are highly correlated with each other, such that they do not provide unique or independent information in the regression model.
-
-If the degree of correlation is high enough between predictor variables, it can cause problems when fitting and interpreting the regression model. 
-
-The most straightforward way to detect multicollinearity in a regression model is by calculating a metric known as the variance inflation factor, often abbreviated VIF.
-
-VIF measures the strength of correlation between predictor variables in a model. It takes on a value between 1 and positive infinity.
-
-We use the following rules of thumb for interpreting VIF values:
-
-- VIF = 1: There is no correlation between a given predictor variable and any other predictor variables in the model.
-- VIF between 1 and 5: There is moderate correlation between a given predictor variable and other predictor variables in the model.
-- VIF > 5: There is severe correlation between a given predictor variable and other predictor variables in the model.
-
-Source: https://www.statology.org/multicollinearity-in-r/
-
 ```{r Check for multicollineraity}
 
-#define multiple linear regression model
+# Define MLR model
 mlr_coll <- lm(hm_temp ~ elevation + canopy_height + building_height, data = temp_clean_station_hm_cov)
 
-mlr_coll
-
+# Compute VIF for each predictor
 vif_df <- car::vif(mlr_coll) %>%
   as.data.frame() %>%
   tibble::rownames_to_column("covariate") %>%
@@ -462,16 +440,14 @@ p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
     values = c(
       "building_height" = "darkorange3",
       "canopy_height"   = "darkolivegreen",
-      "elevation"       = "burlywood2"
-    ),
+      "elevation"       = "burlywood2"),
     guide = "none"
   ) +
   scale_x_discrete(
     labels = c(
       "building_height" = "Building Height",
       "canopy_height"   = "Canopy Height",
-      "elevation"       = "Elevation"
-    )
+      "elevation"       = "Elevation")
   ) +
   geom_hline(yintercept = 5,  linetype = "dashed", color = "black", linewidth = 0.8) +
   annotate("text", x = 0.5, y = 5.2,
@@ -500,57 +476,7 @@ p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
 p_vif
 
 # Save output to file
-ggsave("../plots/multicollinearity.png", p_vif, width = 8, height = 5, dpi = 300)
+ggsave("../plots_report/Multicollinearity_covariates.png", p_vif, width = 8, height = 5, dpi = 300)
 ```
 
 None of the predictors (elevation, canopy height, building height) show problematic multicollinearity. All VIFs are under 5, suggesting the model is stable with respect to predictor relationships.
-
-------------------------------------------------------------------------
-
-
-
-------------------------------------------------------------------------
-
-GAM for all three covariates
-
-Comment: A general rule of thumb is to use a high number of splines and use cross-validation of lambda (λ) values to find the model that generalises best. Remember we can have different splines and lambda values for every variable in our model.
-
-```{r}
-gam_all <- gam(mh_temp ~ 
-                  s(elev) + 
-                  s(canopy) + 
-                  s(bldg), 
-                data = temp_shm.ex)
-summary(gam_all)
-
-concurvity(gam_all, full = TRUE)
-```
-
-
-
-Example: Visualize the results
-
-```{r}
-# Vary elevation across its range; fix the others at their median
-predict_temp <- data.frame(
-  elevation = seq(min(temp_shm.ex$elev), max(temp_shm.ex$elev), length.out = 20),
-  tree_canopy_height = median(temp_shm.ex$canopy),
-  building_height = median(temp_shm.ex$bldg)
-)
-
-# Predict using the full GAM model
-predictions <- predict(gam_all, newdata = predict_temp, type = "response", se.fit = TRUE)
-
-# Plot the data and the GAM fit
-ggplot() +
-  geom_point(data = temp_shm.ex, aes(x = elevation, y = mh_temp)) +
-  geom_line(data = data.frame(elevation = predict_temp$elevation, mh_temp = predictions$fit), 
-            aes(x = elevation, y = mh_temp), color = "blue", size = 1) +
-  geom_ribbon(data = data.frame(elevation = predict_temp$elevation, fit = predictions$fit, 
-                                se = predictions$se.fit), aes(x = elevation, 
-                                ymin = fit - 1.96 * se, 
-                                ymax = fit + 1.96 * se), alpha = 0.3) +
-  labs(title = "GAM Fit for Monthly Mean Temperature vs. Elevation", 
-       x = "Elevation [m]", y = "Monthly Mean Temperature [°C]") +
-  theme_minimal()
-```
