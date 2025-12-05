@@ -17,15 +17,9 @@ library(sf)
 library(sp)
 library(terra)
 library(raster)
-library(stars)
-library(spdep)
 
 # Spatial Analysis & Interpolation
 library(gstat)
-library(randomForest)
-library(nlme)
-library(automap)
-library(mgcv)
 library(lmtest)
 library(sandwich)
 library(broom)
@@ -37,15 +31,7 @@ library(tidyverse)
 # Data Visualization
 library(ggplot2)
 library(scales)
-library(gridExtra)
-library(corrplot)
-
-# Mapping & Interactive Visualization
-library(tmap)
-
-# Additional
 library(lattice)
-library(car)
 ```
 
 --------------------------------------------------------------------------------
