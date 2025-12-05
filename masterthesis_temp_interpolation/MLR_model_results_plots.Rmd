@@ -247,18 +247,17 @@ for (one_day in all_days) {
         hi95     = q[2]
       )
     })
+  moran_results_clean <- moran_results %>%
+    mutate(
+      date = as.Date(hour, tz = "Europe/Berlin"),
+      hour = lubridate::hour(hour),
+      moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
+    ) %>%
+    dplyr::select(date, hour, moran_i, p_mc, moran_sig)
+  
+  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
 }
   
-moran_results_clean <- moran_results %>%
-mutate(
-  date = as.Date(hour, tz = "Europe/Berlin"),
-  hour = lubridate::hour(hour),
-  moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
-) %>%
-dplyr::select(date, hour, moran_i, p_mc, moran_sig)
-
-moran_summary_list[[as.character(one_day)]] <- moran_results_clean
-
 # Convert one_day to proper Date for plotting and filenames
 day_label <- as.Date(one_day, origin = "1970-01-01")
 
