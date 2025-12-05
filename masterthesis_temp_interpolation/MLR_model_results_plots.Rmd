@@ -178,21 +178,24 @@ The following plot aims to answer this research question:
 Spatial Autocorrelation of MLR model residuals
 
 ```{r Loop to calculate Morans I on regression residuals}
-# Import residuals
+
+# Import residuals from hourly MLR models
 mlr_residuals <- read.csv("../MLR_07_2023_12days/mlr_residuals_all.csv",
   stringsAsFactors = FALSE)
 
+# Load station coords
 station_coords_sf <- sf::read_sf("../data/temp_HD/station_coords.gpkg")
 
+# Extract UTM coords for each station
 station_coords_df <- station_coords_sf %>%
-  st_transform(32632) %>%                     # ensure projected CRS for Moran's I
+  st_transform(32632) %>%                     
   mutate(
-    lon = st_coordinates(.)[, 1],             # UTM easting
-    lat = st_coordinates(.)[, 2]              # UTM northing
+    lon = st_coordinates(.)[, 1],          
+    lat = st_coordinates(.)[, 2]              
   ) %>%
   st_drop_geometry()
 
-# Parse timestamps and join coordinates
+# Parse timestamps and attach station coords to residuals
 mlr_residuals <- mlr_residuals %>%
   mutate(
     hour = suppressWarnings(ymd_hms(timestamp, tz = "Europe/Berlin")),
@@ -202,7 +205,7 @@ mlr_residuals <- mlr_residuals %>%
   ) %>%
   left_join(station_coords_df, by = "entity_id")
 
-# Convert to sf object with CRS 32632
+# Convert to sf object for spatial operations
 mlr_residuals_sf <- st_as_sf(
   mlr_residuals,
   coords = c("lon", "lat"),
@@ -210,33 +213,43 @@ mlr_residuals_sf <- st_as_sf(
   remove = FALSE
 )
 
-# Loop across days using the sf version
+# Define analysis period and container for daily Moran's I results
 month_start <- as.Date("2023-07-01")
 month_end   <- as.Date("2023-07-12")
 all_days    <- seq(month_start, month_end, by = "day")
-
 moran_summary_list <- list()
 
+# Loop over each day and compute Moran’s I for every hour separately
 for (one_day in all_days) {
   message("Processing ", one_day)
 
-  # Filter to that day directly from sf object
+  # Extract residuals for the current day
   df_day <- mlr_residuals_sf %>%
     filter(day == one_day)
 
   if (nrow(df_day) == 0) next
 
-  # Compute Moran’s I for each timestamp
+  # Compute Moran's I for each hourly timestamp
   moran_results <- df_day %>%
     group_split(hour) %>%
     map_dfr(function(df_slice) {
+      
+      # Extract coordinates for spatial weights construction
       xy <- st_coordinates(df_slice)
+      
+      # Build nearest-neighbor weights (k=8) for Moran's I
       knn <- knearneigh(xy, k = 8)
       nb  <- knn2nb(knn)
       lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+      
+      # Compute Moran's I (asymptotic and Monte Carlo versions)
       mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
       mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
+      
+      # 95% Monte Carlo confidence interval
       q  <- quantile(mc$res, c(0.025, 0.975))
+      
+      # Store results for this hour
       tibble(
         hour     = unique(df_slice$hour),
         moran_i  = mt$estimate[["Moran I statistic"]],
@@ -247,6 +260,8 @@ for (one_day in all_days) {
         hi95     = q[2]
       )
     })
+  
+  # Clean and standardise output format for joining with coefficient tables later
   moran_results_clean <- moran_results %>%
     mutate(
       date = as.Date(hour, tz = "Europe/Berlin"),
@@ -255,19 +270,15 @@ for (one_day in all_days) {
     ) %>%
     dplyr::select(date, hour, moran_i, p_mc, moran_sig)
   
+  # Save daily results into list
   moran_summary_list[[as.character(one_day)]] <- moran_results_clean
 }
-  
-# Convert one_day to proper Date for plotting and filenames
-day_label <- as.Date(one_day, origin = "1970-01-01")
 
+# Combine daily results into one table
 moran_summary <- dplyr::bind_rows(moran_summary_list)
 ```
 
-```{r}
-# Output directory for saving figures
-output_pval <- "../plots_report"
-if (!dir.exists(output_dir)) dir.create(output_dir)
+```{r Plot Robust P-Values}
 
 # Categorize p-values before plotting
 coef_all <- coef_all %>%
@@ -280,16 +291,18 @@ coef_all <- coef_all %>%
     )
   )
 
+# Join Moran's I significance to the coefficient table
 coef_all <- coef_all %>%
   left_join(moran_summary, by = c("date", "hour"))
 
-# One row per (date, hour), keeping only hours with significant Moran's I
+# One row per day and hour, keeping only hours with significant Moran's I
+# Used for red significance band in plot
 moran_band <- coef_all %>%
   dplyr::distinct(date, hour, moran_sig.y) %>%
-  dplyr::filter(moran_sig.y)   # TRUE = significant spatial autocorrelation
+  # TRUE = significant spatial autocorrelation
+  dplyr::filter(moran_sig.y)   
 
-
-
+# Covariate significance + Moran's I overlay
 p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_category)) +
   geom_tile(color = "grey85") +
   geom_rect(
@@ -352,8 +365,8 @@ Red outlines highlight hours where regression residuals show significant spatial
     color = guide_legend(order = 2, override.aes = list(fill = NA, linewidth = 0.9, size = 5))
   )
 
-# Save each page
-ggsave(filename = file.path(output_pval, sprintf("covariate_pvalues.png")), plot = p_pval,
+# Save plot
+ggsave(filename = file.path("../plots_report/sig_covariates_pval.png"), plot = p_pval,
        width = 12, height = 10, dpi = 300)
 
 p_pval
