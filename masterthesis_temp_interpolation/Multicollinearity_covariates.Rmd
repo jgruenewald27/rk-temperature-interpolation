@@ -60,7 +60,8 @@ temp <- temp %>% filter(!is.na(temperature))
 temp <- st_transform(temp, crs="EPSG:32632")
 
 # Clean the data from outliers -> currently working with hard, manual breaks
-# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+# Currently nothing is removed by this step because no measurements are above 
+# 40°C for the year 2023
 temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
 
 # Drop all measurement stations which didn't collect data the entire year around
@@ -206,22 +207,29 @@ corr_p <- cor(covariates_df[c("elevation","canopy_height","building_height")],
               use="pairwise.complete.obs", method="pearson")
 
 # Visualize correlation matrix as color heatmap
-png("../plots/correlation_covariates_spearman.png", width = 2000, height = 1600, res = 300)
-corrplot_s <- corrplot(corr_s, method = "color", 
-                       addCoef.col = "black", tl.col = "black", tl.srt = 45,number.cex = 0.8)
+png("../plots/correlation_covariates_spearman.png", 
+    width = 2000, height = 1600, res = 300)
+corrplot_s <- corrplot(corr_s, method = "color", addCoef.col = "black", 
+                       tl.col = "black", tl.srt = 45,number.cex = 0.8)
 dev.off()
 
-png("../plots/correlation_covariates_pearson.png", width = 2000, height = 1600, res = 300)
-corrplot_p <- corrplot(corr_p, method = "color", 
-                       addCoef.col = "black", tl.col = "black", tl.srt = 45, number.cex = 0.8)
+png("../plots/correlation_covariates_pearson.png", 
+    width = 2000, height = 1600, res = 300)
+corrplot_p <- corrplot(corr_p, method = "color", addCoef.col = "black", 
+                       tl.col = "black", tl.srt = 45, number.cex = 0.8)
 dev.off()
 ```
 
-The results fit really well to Heidelberg and its surroundings and describe how they look like.
+Results fit really well to HD and its surroundings and describe how they look like.
 
--	Elevation vs. Canopy (r ≈ 0.83): Strong positive correlation — higher hills (e.g., Heiligenberg, Königstuhl) tend to have taller/denser canopy.
--	Elevation vs. Building height (r ≈ −0.34): Moderate negative correlation — taller buildings are concentrated at lower elevations (valley floor).
--	Canopy vs. Building height (r ≈ −0.36): Moderate negative correlation — built-up areas generally coincide with less canopy, and vice versa (they tend not to co-occur).
+-	Elevation vs. Canopy (r ≈ 0.83): 
+  Strong positive correlation — higher hills (e.g., Heiligenberg, Königstuhl) 
+  tend to have taller/denser canopy.
+-	Elevation vs. Building height (r ≈ −0.34): Moderate negative correlation — 
+  taller buildings are concentrated at lower elevations (valley floor).
+-	Canopy vs. Building height (r ≈ −0.36): Moderate negative correlation — 
+  built-up areas generally coincide with less canopy, and vice versa 
+  (they tend not to co-occur).
 
 --------------------------------------------------------------------------------
 
@@ -245,7 +253,9 @@ ex_agg <- ex_agg[match(seq_len(nrow(temp_clean_station_hm)), ex_agg$ID), -1]
 temp_clean_station_hm_cov <- cbind(as.data.frame(temp_clean_station_hm), ex_agg)
 ```
 
-Z-score normalization: mean of 0 and standard deviation of 1
+--------------------------------------------------------------------------------
+
+Z-Standardization: results in mean of 0 and standard deviation of 1
 
 ```{r z-standardization of covariates}
 
@@ -298,11 +308,12 @@ ggplot(df_long, aes(x = value)) +
   theme(panel.grid.minor = element_blank())
 ```
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
-Calculate correlation between the three covariates and the dependent variable temperature using a linear regression model
+Calculate correlation between the three covariates and the dependent variable 
+temperature using a linear regression model
 
-```{r Calculate correlation between the three covariates and the dependent variable temperature}
+```{r Calculate corr between covariates and dependent variable}
 
 # Pick relevant columns
 df <- temp_clean_station_hm_cov %>%
@@ -317,8 +328,10 @@ station_df <- df %>%
 # Compute correlation matrix (Pearson + Spearman)
 vars <- c("mean_temp", "elevation", "canopy_height", "building_height")
 
-corr_p <- cor(station_df[vars], use = "pairwise.complete.obs", method = "pearson")
-corr_s <- cor(station_df[vars], use = "pairwise.complete.obs", method = "spearman")
+corr_p <- cor(station_df[vars], use = "pairwise.complete.obs", 
+              method = "pearson")
+corr_s <- cor(station_df[vars], use = "pairwise.complete.obs", 
+              method = "spearman")
 
 print("Pearson correlation:")
 print(corr_p)
@@ -326,41 +339,32 @@ print(corr_p)
 print("Spearman correlation:")
 print(corr_s)
 
-# reshape to long format
+# Reshape to long format
 station_long <- station_df %>%
   pivot_longer(cols = c(elevation, canopy_height, building_height),
                names_to = "covariate", values_to = "value")
 
-# 2. Compute Pearson correlation per covariate
+# Compute Pearson correlation per covariate
 cors <- station_long %>%
   group_by(covariate) %>%
   summarise(
-    r = cor(value, mean_temp, method = "pearson", use = "pairwise.complete.obs")
+    r = cor(value, mean_temp, method = "spearman", use = "pairwise.complete.obs")
   ) %>%
   mutate(
     label = sprintf("italic(r) == %.2f", r)   # format for plotmath
   )
 
+# Plot correlation + Spearman
 p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = "lm", se = TRUE, color = "darkred") +
-  #geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), color = "blue", linetype = "dashed")
-  facet_wrap(~ covariate, scales = "free_x", nrow = 1,
-             labeller = labeller(
+  facet_wrap(~ covariate, scales = "free_x", nrow = 1, labeller = labeller(
                covariate = c(elevation = "Elevation [m]",
                              canopy_height = "Canopy Height [m]",
-                             building_height = "Building Height [m]")
-             )) +
-  geom_text(
-    data = cors,
-    aes(label = label),
-    x = -Inf, y = Inf,
-    hjust = -0.2, vjust = 2,
-    parse = TRUE,
-    size = 5,
-    fontface = "bold",
-    inherit.aes = FALSE
-  ) +
+                             building_height = "Building Height [m]"))) +
+  geom_text(data = cors, aes(label = label), x = -Inf, y = Inf, hjust = -0.2, 
+            vjust = 2, parse = TRUE, size = 5, fontface = "bold",
+            inherit.aes = FALSE) +
   scale_y_continuous(limits = c(9, 15)) +
   scale_x_continuous(expand = expansion(mult = c(0.02, 0.02))) +
   labs(title = "Linear Relationships Between Yearly Mean Temperature and Environmental Covariates",
@@ -377,53 +381,14 @@ p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
 
 p_corr_temp_cov
 
-# Save output to file
-ggsave("../plots/correlation_temperature_vs_covariates.png", p_corr_temp_cov, width = 12, height = 6, dpi = 300)
+# Save correlation plot to file
+ggsave("../plots/correlation_temperature_vs_covariates.png", 
+       p_corr_temp_cov, width = 12, height = 6, dpi = 300)
 ```
 
-------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
-Calculate correlation between the three covariates and the dependent variable temperature using a GAM model
-
-```{r}
-p_corr_temp_cov_gam <- ggplot(station_long, aes(x = value, y = mean_temp)) +
-  geom_point(alpha = 0.6) +
-  geom_smooth(method = "gam", formula = y ~ s(x, k = 5), 
-              se = TRUE, color = "darkblue") +
-  facet_wrap(~ covariate, scales = "free_x", nrow = 1,
-             labeller = labeller(
-               covariate = c(elevation = "Elevation [m]",
-                             canopy_height = "Canopy Height [m]",
-                             building_height = "Building Height [m]")
-             )) +
-  scale_y_continuous(limits = c(9, 15)) +
-  labs(title = "Yearly Mean Temperature per Station vs Environmental Covariates (GAM fit)",
-       x = NULL, y = "Mean Temperature [°C]") +
-  theme_bw() +
-  theme(strip.text = element_text(face = "bold"))
-
-p_corr_temp_cov_gam
-```
-
-------------------------------------------------------------------------
-
-Comparison between linear and non-linear model
-
-```{r}
-# Elevation
-lm(mean_temp ~ elevation, data = station_df)
-gam(mean_temp ~ s(elevation, k = 5), data = station_df)
-
-# Building height
-lm(mean_temp ~ building_height, data = station_df)
-gam(mean_temp ~ s(building_height, k = 5), data = station_df)
-
-# Canopy height
-lm(mean_temp ~ canopy_height, data = station_df)
-gam(mean_temp ~ s(canopy_height, k = 5), data = station_df)
-```
-
-------------------------------------------------------------------------
+Check for multicollinearity between predictors to address this issue if present
 
 ```{r Check for multicollineraity}
 
@@ -439,31 +404,23 @@ vif_df <- car::vif(mlr_coll) %>%
 # Plot VIF values
 p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
   geom_col(color = "grey30", linewidth = 0.3) +
-  scale_fill_manual(
-    values = c(
-      "building_height" = "darkorange3",
-      "canopy_height"   = "darkolivegreen",
-      "elevation"       = "burlywood2"),
-    guide = "none"
-  ) +
-  scale_x_discrete(
-    labels = c(
-      "building_height" = "Building Height",
-      "canopy_height"   = "Canopy Height",
-      "elevation"       = "Elevation")
-  ) +
-  geom_hline(yintercept = 5,  linetype = "dashed", color = "black", linewidth = 0.8) +
-  annotate("text", x = 0.5, y = 5.2,
-         label = "VIF > 5 high multicollinearity",
-         hjust = 0, size = 4, color = "grey40") +
+  scale_fill_manual(values = c("building_height" = "darkorange3", 
+                               "canopy_height"   = "darkolivegreen",
+                               "elevation"       = "burlywood2"),
+                    guide = "none") +
+  scale_x_discrete(labels = c("building_height" = "Building Height",
+                              "canopy_height"   = "Canopy Height",
+                              "elevation"       = "Elevation")) +
+  geom_hline(yintercept = 5,  linetype = "dashed", 
+             color = "black", linewidth = 0.8) +
+  annotate("text", x = 0.5, y = 5.2, label = "VIF > 5 high multicollinearity",
+           hjust = 0, size = 4, color = "grey40") +
   geom_text(aes(label = round(VIF, 2)),
           vjust = -0.5, size = 5) +
-  labs(
-    title = "Variance Inflation Factors (VIF) for Model Covariates",
+  labs(title = "Variance Inflation Factors (VIF) for Model Covariates",
     caption = "Values assess multicollinearity among predictors",
     x = "Covariate",
-    y = "VIF"
-  ) +
+    y = "VIF") +
   theme_minimal(base_size = 14) +
   theme(
     plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
@@ -473,13 +430,65 @@ p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
     axis.text.x = element_text(angle = 30, hjust = 1),
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(color = "grey85")
-  )
+    panel.grid.major.y = element_line(color = "grey85"))
 
 p_vif
 
-# Save output to file
-ggsave("../plots_report/Multicollinearity_covariates.png", p_vif, width = 8, height = 5, dpi = 300)
+# Save VIF plot to file
+ggsave("../plots_report/Multicollinearity_covariates.png", 
+       p_vif, width = 8, height = 5, dpi = 300)
 ```
 
-None of the predictors (elevation, canopy height, building height) show problematic multicollinearity. All VIFs are under 5, suggesting the model is stable with respect to predictor relationships.
+None of the three predictors (elevation, canopy height, building height) show 
+problematic multicollinearity. All VIFs are under 5, suggesting no inflation of 
+the variance of the estimated regression coefficients.
+
+--------------------------------------------------------------------------------
+
+THE FOLLOWING CODE WILL NOT BE INCLUDED IN THE FINAL THESIS AND IS THEREFORE NOT 
+RELEVANT FOR THE ANALYSIS
+
+--------------------------------------------------------------------------------
+
+Calculate correlation between the three covariates and the dependent variable 
+temperature using a GAM model
+
+```{r}
+
+# Try GAM model
+p_corr_temp_cov_gam <- ggplot(station_long, aes(x = value, y = mean_temp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 5), 
+              se = TRUE, color = "darkblue") +
+  facet_wrap(~ covariate, scales = "free_x", nrow = 1,
+             labeller = labeller(
+               covariate = c(elevation = "Elevation [m]",
+                             canopy_height = "Canopy Height [m]",
+                             building_height = "Building Height [m]")
+             )) +
+  scale_y_continuous(limits = c(9, 15)) +
+  labs(title = "Yearly Mean Temperature per Station vs Environmental 
+       Covariates (GAM fit)",
+       x = NULL, y = "Mean Temperature [°C]") +
+  theme_bw() +
+  theme(strip.text = element_text(face = "bold"))
+
+p_corr_temp_cov_gam
+```
+
+Comparison between linear and non-linear model
+
+```{r}
+
+# Elevation
+lm(mean_temp ~ elevation, data = station_df)
+gam(mean_temp ~ s(elevation, k = 5), data = station_df)
+
+# Building height
+lm(mean_temp ~ building_height, data = station_df)
+gam(mean_temp ~ s(building_height, k = 5), data = station_df)
+
+# Canopy height
+lm(mean_temp ~ canopy_height, data = station_df)
+gam(mean_temp ~ s(canopy_height, k = 5), data = station_df)
+```
