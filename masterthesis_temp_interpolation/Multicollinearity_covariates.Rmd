@@ -227,36 +227,38 @@ The results fit really well to Heidelberg and its surroundings and describe how 
 
 ```{r Adding covariates to temperature data}
 
-# Convert Spatial object to RasterBrick -> SpatRaster
+# Convert Spatial object to RasterBrick then to SpatRaster for terra workflows
 r_brick   <- brick(grids_sp)
 grid_terra <- rast(r_brick)
 
-# Extract raster values at point features
+# Extract raster covariate values at the locations of the point features
 ex <- terra::extract(grid_terra, temp_clean_station_hm)
 
-# Aggregate duplicates to a single row per original feature
-# Use mean
+# Aggregate extracted values for points with duplicated IDs
+# Compute the mean value per ID
 ex_agg <- aggregate(. ~ ID, data = ex, FUN = mean, na.rm = TRUE)
 
-# Reorder aggregated rows to match original feature order
+# Reorder aggregated rows to match the original feature order + drop ID column
 ex_agg <- ex_agg[match(seq_len(nrow(temp_clean_station_hm)), ex_agg$ID), -1]
 
-# Bind attributes + extracted covariates
+# Combine original station attributes with the extracted covariate data
 temp_clean_station_hm_cov <- cbind(as.data.frame(temp_clean_station_hm), ex_agg)
-
-str(temp_clean_station_hm_cov)
 ```
 
 Z-score normalization: mean of 0 and standard deviation of 1
 
-```{r}
-covars <- c("elevation", "canopy_height", "building_height")   # add "lon","lat" if you want
+```{r z-standardization of covariates}
 
-# learn mean/sd
-mu  <- sapply(temp_clean_station_hm_cov[, covars], function(x) mean(x, na.rm = TRUE))
-sdv <- sapply(temp_clean_station_hm_cov[, covars], function(x) sd(x,   na.rm = TRUE))
+# Covariates to be z-standardized
+covars <- c("elevation", "canopy_height", "building_height")
 
-# guard against zero-variance columns
+# Compute mean and standard deviation for each covariate
+mu  <- sapply(temp_clean_station_hm_cov[, covars], 
+              function(x) mean(x, na.rm = TRUE))
+sdv <- sapply(temp_clean_station_hm_cov[, covars], 
+              function(x) sd(x,   na.rm = TRUE))
+
+# Check for covariates with zero or undefined variance and prevent division by zero
 zero_sd <- sdv == 0 | is.na(sdv)
 if (any(zero_sd)) {
   warning("Zero-variance covariate(s) set to 0: ",
@@ -264,35 +266,36 @@ if (any(zero_sd)) {
   sdv[zero_sd] <- 1
 }
 
-# add *_z columns
+# Create z-standardized versions of each covariate
 for (nm in covars) {
   temp_clean_station_hm_cov[[paste0(nm, "_z")]] <-
     (temp_clean_station_hm_cov[[nm]] - mu[[nm]]) / sdv[[nm]]
 }
 
-# (optional) keep the parameters for reproducibility
-z_params <- data.frame(covariate = names(mu), mean = as.numeric(mu), sd = as.numeric(sdv))
+# Store means and SDs for reproducibility
+z_params <- data.frame(covariate = names(mu), 
+                       mean = as.numeric(mu), 
+                       sd = as.numeric(sdv))
 ```
 
 ```{r}
-# long format for faceting
+
+# Convert covariates to long format for faceted plotting
 df_long <- temp_clean_station_hm_cov %>%
   select(all_of(covars)) %>%
   pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
   filter(!is.na(value))
 
-# histograms
-p_cov <- ggplot(df_long, aes(x = value)) +
+# Create histograms of each covariate
+ggplot(df_long, aes(x = value)) +
   geom_histogram(bins = 40, alpha = 0.85) +
   facet_wrap(~ variable, scales = "free", ncol = 1) +
   labs(
-    title = "Distributions of Covariates",
+    title = "Distribution of Covariates",
     x = NULL, y = "Count"
   ) +
   theme_minimal(base_size = 13) +
   theme(panel.grid.minor = element_blank())
-
-p_cov
 ```
 
 ------------------------------------------------------------------------
