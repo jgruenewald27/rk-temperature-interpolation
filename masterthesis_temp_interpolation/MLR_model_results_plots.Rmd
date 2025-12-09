@@ -301,7 +301,7 @@ p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_category)) +
         color = "Moran’s I (p < 0.05)"),
     inherit.aes = FALSE, fill = NA, linewidth = 0.4, alpha = 0.4
   ) +
-  ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, page = i) +
+  ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4) +
   scale_y_discrete(labels = c(
     "building_height_z" = "Building Height",
     "canopy_height_z"   = "Canopy Height",
