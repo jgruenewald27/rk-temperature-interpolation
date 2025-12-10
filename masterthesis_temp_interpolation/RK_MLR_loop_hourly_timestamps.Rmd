@@ -660,16 +660,15 @@ for (i in seq_along(timestamps)) {
   ## STEP 2: Fit MLR
   ## ------------------------------------------------
 
-  lm.temp_shm <- lm(
-    hm_temp ~ elevation + canopy_height + building_height,
-    data = temp_shm.ex
-  )
+  lm.temp_shm <- lm(hm_temp ~ elevation + canopy_height + building_height,
+                    data = temp_shm.ex)
   summary_lm  <- summary(lm.temp_shm)
 
+  # Calculate fitted values and residuals
   pred  <- predict(lm.temp_shm, temp_shm.ex)
   resid <- temp_shm.ex$hm_temp - pred
 
-  # store regression metrics
+  # Store regression metrics
   lm_metrics_all <- rbind(lm_metrics_all, data.frame(
     timestamp      = ts,
     r_squared      = summary_lm$r.squared,
@@ -685,7 +684,15 @@ for (i in seq_along(timestamps)) {
     AIC            = AIC(lm.temp_shm),
     BIC            = BIC(lm.temp_shm)
   ))
+  
+  # Append results to cumulative LM table
+  if (!exists("lm_metrics_all")) {
+    lm_metrics_all <- model_metrics
+  } else {
+    lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
+  }
 
+  # Attach residuals to dataset and convert to sf for spatial operations
   temp_shm.ex$residuals <- resid
   temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
   st_crs(temp_shm.sf) <- st_crs(grids_sp)
@@ -720,8 +727,7 @@ for (i in seq_along(timestamps)) {
   width   <- cutoff / 10
 
   ## ------------------------------------------------
-  ## Case A — No spatial structure 
-  ## Pure nugget model is assumed
+  ## Step 4a — No spatial structure: Pure nugget model is assumed
   ## ------------------------------------------------
 
   if (moran_p >= 0.05) {
@@ -747,8 +753,7 @@ for (i in seq_along(timestamps)) {
     } else {
 
     ## ------------------------------------------------
-    ## Case B — Spatial structure 
-    ## Fit structured variogram
+    ## Case 4b — Spatial structure: Fit structured variogram
     ## ------------------------------------------------
 
     cat("  → Significant spatial autocorrelation: fitting structured variogram.\n")
@@ -901,7 +906,7 @@ for (i in seq_along(timestamps)) {
   dev.off()
     
   ## ------------------------------------------------
-  ## STEP 4a: CV of residual kriging
+  ## STEP 5a: CV of residual kriging
   ## ------------------------------------------------
 
   cv_resid <- krige.cv(
@@ -912,10 +917,12 @@ for (i in seq_along(timestamps)) {
     nmax      = 10
   )
 
+  # Compute CV performance metrics
   cv_rmse <- sqrt(mean(cv_resid$residual^2, na.rm = TRUE))
   cv_mae  <- mean(abs(cv_resid$residual), na.rm = TRUE)
   cv_me   <- mean(cv_resid$residual,     na.rm = TRUE)
 
+  # Store CV results
   cv_metrics_all <- rbind(cv_metrics_all, data.frame(
     timestamp = ts,
     moran_I   = moran_I,
@@ -924,6 +931,12 @@ for (i in seq_along(timestamps)) {
     cv_mae    = cv_mae,
     cv_bias   = cv_me
   ))
+  
+  if (!exists("cv_metrics_all")) {
+    cv_metrics_all <- cv_metrics
+  } else {
+    cv_metrics_all <- rbind(cv_metrics_all, cv_metrics)
+  }
 
   ## ------------------------------------------------
   ## STEP 4b: LOOCV for full RK
@@ -941,6 +954,7 @@ for (i in seq_along(timestamps)) {
   rk_cv_mae  <- mean(abs(cv_rk$residual), na.rm = TRUE)
   rk_cv_bias <- mean(cv_rk$residual,     na.rm = TRUE)
 
+  # Store RK CV results
   rk_cv_metrics_all <- rbind(rk_cv_metrics_all, data.frame(
     timestamp   = ts,
     moran_I     = moran_I,
@@ -949,11 +963,18 @@ for (i in seq_along(timestamps)) {
     rk_cv_mae   = rk_cv_mae,
     rk_cv_bias  = rk_cv_bias
   ))
+  
+  if (!exists("rk_cv_metrics_all")) {
+    rk_cv_metrics_all <- rk_cv_metrics
+  } else {
+    rk_cv_metrics_all <- rbind(rk_cv_metrics_all, rk_cv_metrics)
+  }
 
   ## ------------------------------------------------
-  ## STEP 5: Regression–Kriging prediction
+  ## STEP 6: Regression–Kriging prediction
   ## ------------------------------------------------
 
+  # Define kriging model using fitted variogram
   g.resid <- gstat(
     id = "residuals",
     formula = residuals ~ 1,
@@ -962,37 +983,59 @@ for (i in seq_along(timestamps)) {
     model = rvgm.temp
   )
 
+  # Predict deterministic trend (LM) and stochastic residuals (OK)
   locTEMP.reg <- predict(lm.temp_shm, grids_sp)
   locTEMP     <- predict(g.resid, grids_sp, beta = 1, BLUE = FALSE)
 
+  # Combine LM + kriged residuals
   rk.pred <- locTEMP.reg + locTEMP$residuals.pred
   grids_sp$rk_pred <- rk.pred
 
+  # Export predicitons as .tif
   rk_raster <- terra::rast(grids_sp["rk_pred"])
   rk_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_prediction.tif"))
   terra::writeRaster(rk_raster, rk_file_tif, overwrite = TRUE)
+  
+  # Plot RK prediction map
+  rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
+  png(rk_file_img, width = 8, height = 6, units = "in", res = 300)
+  print(
+    spplot(grids_sp, "rk_pred",
+           main = paste("Regression Kriging Prediction (°C)\n", dt_lab),   
+           sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
+  dev.off()
 
   ## ------------------------------------------------
-  ## STEP 6: Evaluate RK predictions at station points
+  ## STEP 7: Evaluate RK predictions at station points
   ## ------------------------------------------------
 
+  # Match station coordinates with observed stations only
   obs_coords   <- sf::st_coordinates(temp_shm.sf)
+  
+  # Convert to SpatialPoints object with same CRS as prediction grid
   obs_stations <- SpatialPoints(obs_coords, proj4string = CRS(proj4string(grids_sp)))
+  
+  # Extract only at observed station locations
   rk_at_obs    <- sp::over(obs_stations, grids_sp)
-
+  
+  # Combine predictions with observations
   rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$hm_temp)
+  
+  # Calculate prediction error
   rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
 
+  # Compute RK metrics
   rk_rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
   rk_mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
   rk_bias <- mean(rk_eval$residual,     na.rm = TRUE)
 
-  rk_metrics_all <- rbind(rk_metrics_all, data.frame(
-    timestamp = ts,
-    rk_rmse   = rk_rmse,
-    rk_mae    = rk_mae,
-    rk_bias   = rk_bias
-  ))
+  # Append RK metrics
+  rk_metrics <- data.frame(timestamp = ts, rk_rmse   = rmse, rk_mae    = mae, rk_bias   = bias)
+  if (!exists("rk_metrics_all")) {
+    rk_metrics_all <- rk_metrics
+  } else {
+    rk_metrics_all <- rbind(rk_metrics_all, rk_metrics)
+  }
 
   ## Progress bar update
   completed <- completed + 1L
@@ -1000,6 +1043,10 @@ for (i in seq_along(timestamps)) {
   cat(sprintf("  done. Completed: %d/%d (skipped: %d)\n",
               completed, total, skipped))
 }
+
+# ------------------------------------------------
+# STEP 8: Finalize and save results
+# ------------------------------------------------
 
 close(pb)
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",
@@ -1009,5 +1056,38 @@ cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",
 out_file <- file.path(variogram_dir, "variogram_summary.csv")
 write.csv(variogram_metrics_all, out_file, row.names = FALSE)
 cat("\nSaved variogram diagnostics to:\n  ", out_file, "\n")
+
+# Save MLR metrics
+metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
+if (exists("lm_metrics_all")) {                                     
+  lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
+  lm_metrics_all <- lm_metrics_all %>% relocate(datetime_local, .after = timestamp)  
+  write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
+}
+
+# Save CV metrics
+cv_file <- file.path(output_dir, "cross_validation_metrics.csv")
+if (exists("cv_metrics_all")) {                                     
+  cv_metrics_all$datetime_local <- ts_to_posix(cv_metrics_all$timestamp) 
+  cv_metrics_all <- cv_metrics_all %>% relocate(datetime_local, .after = timestamp) 
+  write.csv(cv_metrics_all, cv_file, row.names = FALSE)
+}
+
+# Save RK LOOCV metrics
+rk_cv_file <- file.path(output_dir, "rk_loocv_metrics.csv")
+if (exists("rk_cv_metrics_all")) {
+  rk_cv_metrics_all$datetime_local <- ts_to_posix(rk_cv_metrics_all$timestamp)
+  rk_cv_metrics_all <- rk_cv_metrics_all %>%
+    relocate(datetime_local, .after = timestamp)
+  write.csv(rk_cv_metrics_all, rk_cv_file, row.names = FALSE)
+}
+
+# Save RK metrics
+rk_file <- file.path(output_dir, "rk_metrics.csv")
+if (exists("rk_metrics_all")) {                                   
+  rk_metrics_all$datetime_local <- ts_to_posix(rk_metrics_all$timestamp)
+  rk_metrics_all <- rk_metrics_all %>% relocate(datetime_local, .after = timestamp) 
+  write.csv(rk_metrics_all, rk_file, row.names = FALSE)
+}
 ```
 
