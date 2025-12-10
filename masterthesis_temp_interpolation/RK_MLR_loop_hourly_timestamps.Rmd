@@ -604,7 +604,7 @@ if (exists("rk_metrics_all")) {
 
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
 start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-01 23:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-01 03:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
 
 cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
@@ -669,7 +669,7 @@ for (i in seq_along(timestamps)) {
   resid <- temp_shm.ex$hm_temp - pred
 
   # Store regression metrics
-  lm_metrics_all <- rbind(lm_metrics_all, data.frame(
+  model_metrics <- rbind(lm_metrics_all, data.frame(
     timestamp      = ts,
     r_squared      = summary_lm$r.squared,
     adj_r_squared  = summary_lm$adj.r.squared,
@@ -923,7 +923,7 @@ for (i in seq_along(timestamps)) {
   cv_me   <- mean(cv_resid$residual,     na.rm = TRUE)
 
   # Store CV results
-  cv_metrics_all <- rbind(cv_metrics_all, data.frame(
+  cv_metrics <- rbind(cv_metrics_all, data.frame(
     timestamp = ts,
     moran_I   = moran_I,
     moran_p   = moran_p,
@@ -955,7 +955,7 @@ for (i in seq_along(timestamps)) {
   rk_cv_bias <- mean(cv_rk$residual,     na.rm = TRUE)
 
   # Store RK CV results
-  rk_cv_metrics_all <- rbind(rk_cv_metrics_all, data.frame(
+  rk_cv_metrics <- rbind(rk_cv_metrics_all, data.frame(
     timestamp   = ts,
     moran_I     = moran_I,
     moran_p     = moran_p,
@@ -1030,7 +1030,13 @@ for (i in seq_along(timestamps)) {
   rk_bias <- mean(rk_eval$residual,     na.rm = TRUE)
 
   # Append RK metrics
-  rk_metrics <- data.frame(timestamp = ts, rk_rmse   = rmse, rk_mae    = mae, rk_bias   = bias)
+  rk_metrics <- data.frame(
+    timestamp = ts,
+    rk_rmse   = rk_rmse,
+    rk_mae    = rk_mae,
+    rk_bias   = rk_bias
+  )
+
   if (!exists("rk_metrics_all")) {
     rk_metrics_all <- rk_metrics
   } else {
@@ -1090,4 +1096,3 @@ if (exists("rk_metrics_all")) {
   write.csv(rk_metrics_all, rk_file, row.names = FALSE)
 }
 ```
-
