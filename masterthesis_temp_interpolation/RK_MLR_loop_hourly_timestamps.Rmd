@@ -597,8 +597,9 @@ if (exists("rk_metrics_all")) {
 --------------------------------------------------------------------------------
 
 ```{r Main loop with improved variogram modelling}
+
 ## ------------------------------------------------
-## PREP: timestamps and static objects
+## Prep: timestamps and static objects
 ## ------------------------------------------------
 
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
@@ -608,6 +609,7 @@ timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= en
 
 cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
 
+# Counters and progress bar
 total     <- length(timestamps)
 completed <- 0L
 skipped   <- 0L
@@ -619,14 +621,15 @@ cat(sprintf("Processing %d timestamps…\n", total))
 r_brick    <- raster::brick(grids_sp)
 grid_terra <- terra::rast(r_brick)
 
-## containers
+## Containers
 lm_metrics_all    <- NULL
 cv_metrics_all    <- NULL
 rk_cv_metrics_all <- NULL
 rk_metrics_all    <- NULL
+variogram_metrics_all <- data.frame()
 
 ## ------------------------------------------------
-## MAIN LOOP
+## Main loop
 ## ------------------------------------------------
 for (i in seq_along(timestamps)) {
 
@@ -643,6 +646,7 @@ for (i in seq_along(timestamps)) {
 
   sel_temp_hm <- temp_clean_station_hm %>% dplyr::filter(hour == ts)
 
+  # Skip if fewer than 25 data points for current hour
   if (nrow(sel_temp_hm) < 25) {
     skipped <- skipped + 1L
     cat("  → skipped (n < 20)\n")
@@ -743,7 +747,7 @@ for (i in seq_along(timestamps)) {
       residuals ~ 1, temp_shm.sf,
       cutoff  = cutoff,
       width   = width,
-      cressie = TRUE # NEEDS TO BE INVESTIGATED
+      cressie = TRUE # NEEDS TO BE JUSTIFIED
     )
 
     sill0   <- var(temp_shm.sf$residuals, na.rm = TRUE)
@@ -832,8 +836,30 @@ for (i in seq_along(timestamps)) {
     
     cat(sprintf("    → Selected model: %s | SSErr = %.3f\n",
                 model_labels[best_idx], sse_vals[best_idx]))
-
     
+    # Ensure directional ranges are formatted
+    dir_range_str <- paste(round(dir_ranges, 3), collapse = "; ")
+    
+    variogram_metrics_all <- rbind(
+      variogram_metrics_all,
+      data.frame(
+        timestamp         = ts,
+        datetime_label    = dt_lab,
+        model_used        = model_labels[best_idx],
+        nugget            = rvgm.temp$psill[1],
+        partial_sill      = rvgm.temp$psill[2],
+        sill_total        = sum(rvgm.temp$psill),
+        range             = rvgm.temp$range[2],
+        anisotropy_ratio  = anis_ratio,
+        anisotropy_dir    = anis_dir,
+        dir_ranges        = dir_range_str,
+        SSErr             = sse_vals[best_idx],
+        moran_I           = moran_I,
+        moran_p           = moran_p,
+        stringsAsFactors = FALSE
+      )
+    )
+
     if (!inherits(rvgm.temp, "variogramModel")) {
       cat("    WARNING: All model fits failed — reverting to default exponential model.\n")
       rvgm.temp <- cand_models[[1]]
@@ -854,20 +880,18 @@ for (i in seq_along(timestamps)) {
         rvgm.temp <- cand_models[[1]]
       }
     }
-    
-    }
+  }
   
-    ## ------------------------------------------------
-    ## STEP 5 — Save variogram plot
-    ## ------------------------------------------------
-    file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
-    png(file_varfit, width = 8, height = 6, units = "in", res = 300)
-    print(
-      plot(rv.temp, rvgm.temp,
-           main = paste0("Residual Variogram Fit\n", dt_lab),
-           pch = 3, col = "black")
-    )
-    dev.off()
+  ## ------------------------------------------------
+  ## STEP 5 — Save variogram plot
+  ## ------------------------------------------------
+  
+  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(rv.temp, rvgm.temp, main = paste0("Residual Variogram Fit\n", dt_lab),
+         pch = 3, col = "black"))
+  dev.off()
     
   ## ------------------------------------------------
   ## STEP 4a: CV of residual kriging
@@ -974,5 +998,9 @@ close(pb)
 cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",
             completed, total, skipped))
 
+# Write variogram summary file
+out_file <- file.path(variogram_dir, "variogram_summary.csv")
+write.csv(variogram_metrics_all, out_file, row.names = FALSE)
+cat("\nSaved variogram diagnostics to:\n  ", out_file, "\n")
 ```
 
