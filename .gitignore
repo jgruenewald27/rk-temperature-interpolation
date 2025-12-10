@@ -44,3 +44,6 @@ data/OSM_LULC/DE_10m_3035_tiled.tif
 masterthesis_temp_interpolation/.DS_Store
 plots_report/.DS_Store
 .DS_Store
+adapted_variogram_RK_07_2023_12days/rk_predictions/2023-07-01_0000_rk_prediction.tif
+/adapted_variogram_RK_07_2023_12days
+/RK_07_2023_13-15days
