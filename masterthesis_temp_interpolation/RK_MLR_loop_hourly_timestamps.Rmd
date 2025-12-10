@@ -643,7 +643,7 @@ for (i in seq_along(timestamps)) {
 
   sel_temp_hm <- temp_clean_station_hm %>% dplyr::filter(hour == ts)
 
-  if (nrow(sel_temp_hm) < 28) {
+  if (nrow(sel_temp_hm) < 25) {
     skipped <- skipped + 1L
     cat("  → skipped (n < 20)\n")
     next
@@ -742,48 +742,64 @@ for (i in seq_along(timestamps)) {
     nug0    <- 0.1 * sill0
     psill0  <- 0.9 * sill0
     range0  <- maxdist / 3
+    
+    ## Candidate theoretical models (Oliver 2015)
+    cand_models <- list(
+      vgm(psill = psill0, model = "Exp", range = range0, nugget = nug0),
+      vgm(psill = psill0, model = "Sph", range = range0, nugget = nug0),
+      vgm(psill = psill0, model = "Gau", range = range0, nugget = nug0)
+    )
+    
+    cat("    Trying candidate models: Exp, Sph, Gau…\n")
+    
+    ## Fit all candidate models
+    fit_list <- lapply(cand_models, function(m) {
+      try(fit.variogram(rv.temp, m, fit.method = 2), silent = TRUE)
+    })
+    
+    ## Extract SSErr values where models succeeded
+    sse_vals <- sapply(fit_list, function(m) {
+      if (inherits(m, "try-error")) return(Inf)
+      val <- attr(m, "SSErr")
+      if (is.null(val) || is.na(val)) Inf else val
+    })
+    
+    ## Pick best model
+    best_idx <- which.min(sse_vals)
+    rvgm.temp <- fit_list[[best_idx]]
+    
+    cat(sprintf("    → Selected model: %s (SSErr = %.3f)\n",
+                cand_models[[best_idx]]$model[2], sse_vals[best_idx]))
 
-    m0 <- vgm(psill = psill0, model = "Exp", range = range0, nugget = nug0)
-
-    # weighted least squares fit
-    rvg_try <- try(fit.variogram(rv.temp, m0, fit.method = 2), silent = TRUE)
-
-    if (inherits(rvg_try, "try-error")) {
-      cat("  → Variogram fit failed; using conservative initial model.\n")
-      rvgm.temp <- m0
-
-    } else {
-
-      rvgm.temp <- rvg_try
-
-      # Structured models only — Nugget has no range, so skip these checks
-      if (!("Nug" %in% rvgm.temp$model)) {
-
-    range_vals <- rvgm.temp$range
-    psill_vals <- rvgm.temp$psill
-
-    bad_model <- 
-        any(is.na(range_vals)) ||
-        any(is.na(psill_vals)) ||
-        any(range_vals < 0) ||
-        any(psill_vals < 0)
-
-    if (bad_model) {
-        cat("  → Variogram unreasonable; reverting to initial model.\n")
-        rvgm.temp <- m0
-    }
+    if (!inherits(rvgm.temp, "variogramModel")) {
+        cat("    WARNING: All model fits failed — using default exponential model.\n")
+        rvgm.temp <- cand_models[[1]]
+      } else {
+        range_vals <- rvgm.temp$range
+        psill_vals <- rvgm.temp$psill
+      
+        bad_model <-
+          any(is.na(range_vals)) ||
+          any(is.na(psill_vals)) ||
+          any(range_vals < 0) ||
+          any(psill_vals < 0)
+      
+        if (bad_model) {
+          cat("    WARNING: Fitted model invalid — reverting to default exponential model.\n")
+          rvgm.temp <- cand_models[[1]]
+        }
       }
     }
-
-    # Save variogram fit plot
-    file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
-    png(file_varfit, width = 8, height = 6, units = "in", res = 300)
-    print(plot(rv.temp, rvgm.temp,
-               main = paste0("Residual Variogram Fit\n", dt_lab),
-               pch = 3, col = "black"))
-    dev.off()
-  }
-
+      
+      file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
+      png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+      print(
+        plot(rv.temp, rvgm.temp,
+             main = paste0("Residual Variogram Fit\n", dt_lab),
+             pch = 3, col = "black")
+      )
+      dev.off()
+    
   ## ------------------------------------------------
   ## STEP 4a: CV of residual kriging
   ## ------------------------------------------------
