@@ -596,7 +596,7 @@ if (exists("rk_metrics_all")) {
 
 --------------------------------------------------------------------------------
 
-```{r}
+```{r Main loop with improved variogram modelling}
 ## ------------------------------------------------
 ## PREP: timestamps and static objects
 ## ------------------------------------------------
@@ -692,7 +692,7 @@ for (i in seq_along(timestamps)) {
 
   coords <- sf::st_coordinates(temp_shm.sf)
 
-  nb <- spdep::knn2nb(spdep::knearneigh(coords, k = 8))
+  nb <- spdep::knn2nb(spdep::knearneigh(coords, k = 4)) # JUSTIFICATION!
   lw <- spdep::nb2listw(nb, style = "W")
   moran_res <- spdep::moran.mc(temp_shm.sf$residuals, lw, nsim = 999)
 
@@ -722,6 +722,14 @@ for (i in seq_along(timestamps)) {
         model = "Nug",
         range = 0
       )
+      
+          ## Create dummy variogram for plotting
+    rv.temp <- variogram(
+      residuals ~ 1, temp_shm.sf,
+      cutoff = cutoff,
+      width  = width,
+      cressie = TRUE
+    )
   
     } else {
 
@@ -743,62 +751,123 @@ for (i in seq_along(timestamps)) {
     psill0  <- 0.9 * sill0
     range0  <- maxdist / 3
     
-    ## Candidate theoretical models (Oliver 2015)
-    cand_models <- list(
-      vgm(psill = psill0, model = "Exp", range = range0, nugget = nug0),
-      vgm(psill = psill0, model = "Sph", range = range0, nugget = nug0),
-      vgm(psill = psill0, model = "Gau", range = range0, nugget = nug0)
-    )
+    ## Directional variograms for anisotropy detection
+    dirs <- c(0, 45, 90, 135)
     
-    cat("    Trying candidate models: Exp, Sph, Gau…\n")
+    rv.dir <- lapply(dirs, function(az) {
+      variogram(
+        residuals ~ 1, temp_shm.sf,
+        alpha = az,
+        cutoff = cutoff,
+        width  = width,
+        cressie = TRUE
+      )
+    })
     
-    ## Fit all candidate models
+    # Estimate directional ranges: distance at ~95% of sill
+    dir_ranges <- sapply(rv.dir, function(v) {
+      sill_est <- max(v$gamma, na.rm = TRUE)
+      idx <- which(v$gamma > 0.95 * sill_est)[1]
+      if (is.na(idx)) Inf else v$dist[idx]
+    })
+    
+    anis_ratio <- max(dir_ranges) / min(dir_ranges)
+    anis_dir   <- dirs[which.min(dir_ranges)]
+    
+    cat(sprintf(
+      "    Anisotropy summary for %s:\n      → Ratio = %.3f\n      → Principal direction = %d°\n      → Directional ranges = %s\n",
+      dt_lab,
+      anis_ratio,
+      anis_dir,
+      paste(round(dir_ranges, 1), collapse = ", ")
+    ))
+
+    if (is.infinite(anis_ratio)) anis_ratio <- 1  # prevents degeneracies
+    
+    cat(sprintf("    Directional ranges: %s\n", 
+                paste(round(dir_ranges), collapse = ", ")))
+    cat(sprintf("    Anisotropy ratio ≈ %.2f | principal direction = %d°\n",
+                anis_ratio, anis_dir))
+    
+    anis_threshold <- 1.5   # typical rule-of-thumb for geometric anisotropy
+
+    if (anis_ratio > anis_threshold) {
+      
+      cat("    → Anisotropy detected — fitting anisotropic variogram models.\n")
+    
+      cand_models <- list(
+        vgm(psill0, "Exp", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio)),
+        vgm(psill0, "Sph", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio)),
+        vgm(psill0, "Gau", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio))
+      )
+      model_labels <- c("Exp (anis)", "Sph (anis)", "Gau (anis)")
+    
+    } else {
+    
+      cat("    → No strong anisotropy — using isotropic candidate models.\n")
+    
+      cand_models <- list(
+        vgm(psill0, "Exp", range0, nug0),
+        vgm(psill0, "Sph", range0, nug0),
+        vgm(psill0, "Gau", range0, nug0)
+      )
+      model_labels <- c("Exp", "Sph", "Gau")
+    }
+
+    cat("    Trying models: ", paste(model_labels, collapse = ", "), "\n")
+
     fit_list <- lapply(cand_models, function(m) {
       try(fit.variogram(rv.temp, m, fit.method = 2), silent = TRUE)
     })
     
-    ## Extract SSErr values where models succeeded
+    # Retrieve SSErr
     sse_vals <- sapply(fit_list, function(m) {
       if (inherits(m, "try-error")) return(Inf)
       val <- attr(m, "SSErr")
       if (is.null(val) || is.na(val)) Inf else val
     })
     
-    ## Pick best model
     best_idx <- which.min(sse_vals)
     rvgm.temp <- fit_list[[best_idx]]
     
-    cat(sprintf("    → Selected model: %s (SSErr = %.3f)\n",
-                cand_models[[best_idx]]$model[2], sse_vals[best_idx]))
+    cat(sprintf("    → Selected model: %s | SSErr = %.3f\n",
+                model_labels[best_idx], sse_vals[best_idx]))
 
+    
     if (!inherits(rvgm.temp, "variogramModel")) {
-        cat("    WARNING: All model fits failed — using default exponential model.\n")
+      cat("    WARNING: All model fits failed — reverting to default exponential model.\n")
+      rvgm.temp <- cand_models[[1]]
+    
+    } else {
+    
+      rv_range <- rvgm.temp$range
+      rv_psill <- rvgm.temp$psill
+    
+      bad_model <- 
+        any(is.na(rv_range)) ||
+        any(is.na(rv_psill)) ||
+        any(rv_range < 0) ||
+        any(rv_psill < 0)
+    
+      if (bad_model) {
+        cat("    WARNING: Fitted model invalid — reverting to default exponential model.\n")
         rvgm.temp <- cand_models[[1]]
-      } else {
-        range_vals <- rvgm.temp$range
-        psill_vals <- rvgm.temp$psill
-      
-        bad_model <-
-          any(is.na(range_vals)) ||
-          any(is.na(psill_vals)) ||
-          any(range_vals < 0) ||
-          any(psill_vals < 0)
-      
-        if (bad_model) {
-          cat("    WARNING: Fitted model invalid — reverting to default exponential model.\n")
-          rvgm.temp <- cand_models[[1]]
-        }
       }
     }
-      
-      file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
-      png(file_varfit, width = 8, height = 6, units = "in", res = 300)
-      print(
-        plot(rv.temp, rvgm.temp,
-             main = paste0("Residual Variogram Fit\n", dt_lab),
-             pch = 3, col = "black")
-      )
-      dev.off()
+    
+    }
+  
+    ## ------------------------------------------------
+    ## STEP 5 — Save variogram plot
+    ## ------------------------------------------------
+    file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
+    png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+    print(
+      plot(rv.temp, rvgm.temp,
+           main = paste0("Residual Variogram Fit\n", dt_lab),
+           pch = 3, col = "black")
+    )
+    dev.off()
     
   ## ------------------------------------------------
   ## STEP 4a: CV of residual kriging
