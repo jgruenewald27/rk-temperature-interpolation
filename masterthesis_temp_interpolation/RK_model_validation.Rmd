@@ -8,16 +8,52 @@ date: "2025-12-05"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r}
+# Load Required Libraries
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(ggspatial)
+library(scales)
+library(gridExtra)
+library(corrplot)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
 Comparison of the Urban Climate Analysis of HD (2023) with the 
 RK temperature prediction surface
 
 ```{r Compare the Stadtklima-Analyse with my RK prediction surface}
 
 # Load rasters and vector data
-mod  <- rast("../rk_results_07-09-2023/rk_predictions/2023-07-09_1400_rk_prediction_map.tif")
-ref5 <- rast("../data/reference/2_22_074_ist_t14_rev01.tif")
+mod  <- rast("../RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction_map.tif")
+ref5 <- rast("../data/stadtklimaanalyse_2023/2_22_074_ist_t14_rev01.tif")
 river <- st_read("../data/waterways/waterways_HD.gpkg")                 
-landuse <- st_read("../data/DE522L1_HEIDELBERG_UA2018_v013/Data/DE522L1_HEIDELBERG_UA2018_v013.gpkg")
+landuse <- st_read("../data/copernicus_LULC/DE522L1_HEIDELBERG_UA2018_v013.gpkg")
 
 # Check if model has CRS
 if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first.")
@@ -131,8 +167,8 @@ p_rk_map <- ggplot() +
   annotation_scale(location = "br", width_hint = 0.3) +    
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(title = "RK model",
-      subtitle = sprintf("Temperature value range: %.1f – %.1f °C", 
+  labs(title = "RK Model Temperature Distribution",
+      subtitle = sprintf("Timestamp: 2023-07-09 14:00\nTemperature value range: %.1f – %.1f °C", 
                          min(mod_df$value, na.rm = TRUE), max(mod_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
@@ -154,7 +190,7 @@ p_ref_map <- ggplot() +
   annotation_scale(location = "br", width_hint = 0.3) +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(title = "Urban Climate Analysis Heidelberg",
+  labs(title = "Urban Climate Analysis Heidelberg (2023)",
        subtitle = sprintf("PET value range: %.1f – %.1f °C", 
                           min(ref_df$value, na.rm = TRUE), max(ref_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
@@ -167,21 +203,22 @@ p_ref_map <- ggplot() +
                                  margin = margin(t = 1, b = 5))
   )
 
-# Combine both plots with shared legend  
-p_rk_ref <- (p_rk_map + p_ref_map + 
-                    plot_layout(guides = "collect") & 
-                    theme(legend.position = "right")) +
-  plot_annotation(
-    title = "Comparison of RK and Reference Temperature Maps — Heidelberg, 09-07-2023 14:00",
-    theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5,
-        margin = margin(b = 10)))
-  )
+# # Combine both plots with shared legend  
+# p_rk_ref <- (p_rk_map + p_ref_map + 
+#                     plot_layout(guides = "collect") & 
+#                     theme(legend.position = "right")) +
+#   plot_annotation(
+#     title = "Comparison of RK and Reference Temperature Maps — Heidelberg, 09-07-2023 14:00",
+#     theme = theme(plot.title = element_text(size = 16, face = "bold", hjust = 0.5,
+#         margin = margin(b = 10)))
+#   )
 
 # Display combined plot
 p_ref_map
+p_rk_map
 
 # Save as PNG
-ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
+#ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
 ```
 
 
