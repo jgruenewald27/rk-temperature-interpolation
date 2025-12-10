@@ -694,25 +694,34 @@ for (i in seq_along(timestamps)) {
   ## STEP 3: Moran’s I
   ## ------------------------------------------------
 
+  # Extract coordinates
   coords <- sf::st_coordinates(temp_shm.sf)
 
+  # 4-nearest-neighbour weights
   nb <- spdep::knn2nb(spdep::knearneigh(coords, k = 4)) # JUSTIFICATION!
   lw <- spdep::nb2listw(nb, style = "W")
+  
+  # Monte Carlo Moran’s I
   moran_res <- spdep::moran.mc(temp_shm.sf$residuals, lw, nsim = 999)
 
+  # Extract statistic + p-value
   moran_I <- moran_res$statistic
   moran_p <- moran_res$p.value
 
   cat("  Moran’s I =", round(moran_I, 4), "p =", round(moran_p, 4), "\n")
 
-  # distance settings
+  # Distance matrix
   dists   <- sp::spDists(coords)
+  # Max distance
   maxdist <- max(dists)
+  # Variogram cutoff
   cutoff  <- 0.5 * maxdist
+  # Variogram cutoff
   width   <- cutoff / 10
 
   ## ------------------------------------------------
-  ## CASE A — No spatial structure → PURE NUGGET MODEL
+  ## Case A — No spatial structure 
+  ## Pure nugget model is assumed
   ## ------------------------------------------------
 
   if (moran_p >= 0.05) {
@@ -738,7 +747,8 @@ for (i in seq_along(timestamps)) {
     } else {
 
     ## ------------------------------------------------
-    ## CASE B — Spatial structure → fit structured variogram
+    ## Case B — Spatial structure 
+    ## Fit structured variogram
     ## ------------------------------------------------
 
     cat("  → Significant spatial autocorrelation: fitting structured variogram.\n")
@@ -882,10 +892,7 @@ for (i in seq_along(timestamps)) {
     }
   }
   
-  ## ------------------------------------------------
-  ## STEP 5 — Save variogram plot
-  ## ------------------------------------------------
-  
+  # Save variogram plot
   file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
   png(file_varfit, width = 8, height = 6, units = "in", res = 300)
   print(
