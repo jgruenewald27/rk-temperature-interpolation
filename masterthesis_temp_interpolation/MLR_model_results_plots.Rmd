@@ -157,8 +157,8 @@ p_cov <- ggplot(coef_all, aes(x = hour)) +
   )
 
 # Save each page
-ggsave(filename = file.path("../plots_report/covariate_importance.png"),
-       plot = p_cov, width = 12, height = 10, dpi = 300)
+# ggsave(filename = file.path("../plots_report/covariate_importance.png"),
+#        plot = p_cov, width = 12, height = 10, dpi = 300)
 
 p_cov
 ```
@@ -175,7 +175,7 @@ The following plot aims to answer this research question:
 
 Spatial Autocorrelation of MLR model residuals
 
-```{r Loop to calculate Morans I on regression residuals}
+```{r Investigate k selection for Morans I calculation}
 
 # Import residuals from hourly MLR models
 mlr_residuals <- read.csv("../MLR_07_2023_12days/mlr_residuals_all.csv",
@@ -204,190 +204,8 @@ mlr_residuals <- mlr_residuals %>%
   left_join(station_coords_df, by = "entity_id")
 
 # Convert to sf object for spatial operations
-mlr_residuals_sf <- st_as_sf(
-  mlr_residuals,
-  coords = c("lon", "lat"),
-  crs = 32632,      
-  remove = FALSE
-)
-
-# Define analysis period and container for daily Moran's I results
-month_start <- as.Date("2023-07-01")
-month_end   <- as.Date("2023-07-12")
-all_days    <- seq(month_start, month_end, by = "day")
-moran_summary_list <- list()
-
-# Loop over each day and compute Moran’s I for every hour separately
-for (one_day in all_days) {
-  message("Processing ", one_day)
-
-  # Extract residuals for the current day
-  df_day <- mlr_residuals_sf %>%
-    filter(day == one_day)
-
-  if (nrow(df_day) == 0) next
-
-  # Compute Moran's I for each hourly timestamp
-  moran_results <- df_day %>%
-    group_split(hour) %>%
-    map_dfr(function(df_slice) {
-      
-      # Extract coordinates for spatial weights construction
-      xy <- st_coordinates(df_slice)
-      
-      # Build nearest-neighbor weights (k=8) for Moran's I
-      knn <- knearneigh(xy, k = 8)
-      nb  <- knn2nb(knn)
-      lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
-      
-      # Compute Moran's I (asymptotic and Monte Carlo versions)
-      mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
-      mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
-      
-      # 95% Monte Carlo confidence interval
-      q  <- quantile(mc$res, c(0.025, 0.975))
-      
-      # Store results for this hour
-      tibble(
-        hour     = unique(df_slice$hour),
-        moran_i  = mt$estimate[["Moran I statistic"]],
-        expected = mt$estimate[["Expectation"]],
-        p_asym   = mt$p.value,
-        p_mc     = mc$p.value,
-        lo95     = q[1],
-        hi95     = q[2]
-      )
-    })
-  
-  # Clean and standardise output format for joining with coefficient tables later
-  moran_results_clean <- moran_results %>%
-    mutate(
-      date = as.Date(hour, tz = "Europe/Berlin"),
-      hour = lubridate::hour(hour),
-      moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
-    ) %>%
-    dplyr::select(date, hour, moran_i, p_mc, moran_sig)
-  
-  # Save daily results into list
-  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
-}
-
-# Combine daily results into one table
-moran_summary <- dplyr::bind_rows(moran_summary_list)
-```
-
-```{r}
-# ---------------------------------------------------------------
-# Loop to calculate Moran's I on regression residuals (multi-k)
-# ---------------------------------------------------------------
-
-# Import residuals from hourly MLR models
-mlr_residuals <- read.csv("../MLR_07_2023_12days/mlr_residuals_all.csv",
-                          stringsAsFactors = FALSE)
-
-# Load station coords
-station_coords_sf <- sf::read_sf("../data/temp_HD/station_coords.gpkg")
-
-# Extract UTM coords for each station
-station_coords_df <- station_coords_sf %>%
-  st_transform(32632) %>%
-  mutate(
-    lon = st_coordinates(.)[, 1],
-    lat = st_coordinates(.)[, 2]
-  ) %>%
-  st_drop_geometry()
-
-# Parse timestamps and attach station coords to residuals
-mlr_residuals <- mlr_residuals %>%
-  mutate(
-    hour = suppressWarnings(ymd_hms(timestamp, tz = "Europe/Berlin")),
-    hour = ifelse(is.na(hour), ymd(timestamp, tz = "Europe/Berlin"), hour),
-    hour = as.POSIXct(hour, origin = "1970-01-01", tz = "Europe/Berlin"),
-    day  = as.Date(hour, tz = "Europe/Berlin")
-  ) %>%
-  left_join(station_coords_df, by = "entity_id")
-
-# Convert to sf object
-mlr_residuals_sf <- st_as_sf(
-  mlr_residuals,
-  coords = c("lon", "lat"),
-  crs = 32632,
-  remove = FALSE
-)
-
-# Analysis period
-month_start <- as.Date("2023-07-01")
-month_end   <- as.Date("2023-07-12")
-all_days    <- seq(month_start, month_end, by = "day")
-
-# Storage
-moran_summary_list <- list()
-
-# ---------------------------------------------------------------
-# MAIN LOOP — DAY BY DAY, HOUR BY HOUR
-# ---------------------------------------------------------------
-for (one_day in all_days) {
-  message("Processing ", one_day)
-
-  df_day <- mlr_residuals_sf %>% filter(day == one_day)
-  if (nrow(df_day) == 0) next
-
-  # --- Compute Moran's I for each hour ---
-  moran_results <- df_day %>%
-    group_split(hour) %>%
-    map_dfr(function(df_slice) {
-
-      xy <- st_coordinates(df_slice)
-
-      # Test k = 4,5,6,7,8
-      k_values <- 4:8
-
-      results_k <- lapply(k_values, function(k) {
-
-        # Build spatial weights
-        knn <- knearneigh(xy, k = k)
-        nb  <- knn2nb(knn)
-        lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
-
-        # Moran’s I (MC version preferred)
-        mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
-        mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
-
-        q <- quantile(mc$res, c(0.025, 0.975))
-
-        tibble(
-          hour     = unique(df_slice$hour),
-          k        = k,
-          moran_i  = mt$estimate[["Moran I statistic"]],
-          expected = mt$estimate[["Expectation"]],
-          p_asym   = mt$p.value,
-          p_mc     = mc$p.value,
-          lo95     = q[1],
-          hi95     = q[2]
-        )
-      })
-
-      bind_rows(results_k)
-    })
-
-  # Clean & standardise
-  moran_results_clean <- moran_results %>%
-    mutate(
-      date = as.Date(hour, tz = "Europe/Berlin"),
-      hour = lubridate::hour(hour),
-      moran_sig = p_mc < 0.05
-    ) %>%
-    select(date, hour, k, moran_i, p_mc, moran_sig)
-
-  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
-}
-
-# Combine all results
-moran_summary <- bind_rows(moran_summary_list)
-
-```
-
-```{r Investigate k selection for Morans I calculation}
+mlr_residuals_sf <- st_as_sf(mlr_residuals, coords = c("lon", "lat"), 
+                             crs = 32632, remove = FALSE)
 
 # k neighbourhood options
 k_values <- 4:8
@@ -471,6 +289,73 @@ k_counts <- recommended_k %>%
   count(k, name = "times_best")
 
 k_counts
+```
+
+```{r Loop to calculate Morans I on regression residuals}
+
+# Define analysis period and container for daily Moran's I results
+month_start <- as.Date("2023-07-01")
+month_end   <- as.Date("2023-07-12")
+all_days    <- seq(month_start, month_end, by = "day")
+moran_summary_list <- list()
+
+# Loop over each day and compute Moran’s I for every hour separately
+for (one_day in all_days) {
+  message("Processing ", one_day)
+
+  # Extract residuals for the current day
+  df_day <- mlr_residuals_sf %>%
+    filter(day == one_day)
+
+  if (nrow(df_day) == 0) next
+
+  # Compute Moran's I for each hourly timestamp
+  moran_results <- df_day %>%
+    group_split(hour) %>%
+    map_dfr(function(df_slice) {
+      
+      # Extract coordinates for spatial weights construction
+      xy <- st_coordinates(df_slice)
+      
+      # Build nearest-neighbor weights (k=8) for Moran's I
+      knn <- knearneigh(xy, k = 4)
+      nb  <- knn2nb(knn)
+      lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+      
+      # Compute Moran's I (asymptotic and Monte Carlo versions)
+      mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
+      mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
+      
+      # 95% Monte Carlo confidence interval
+      q  <- quantile(mc$res, c(0.025, 0.975))
+      
+      # Store results for this hour
+      tibble(
+        hour     = unique(df_slice$hour),
+        moran_i  = mt$estimate[["Moran I statistic"]],
+        expected = mt$estimate[["Expectation"]],
+        p_asym   = mt$p.value,
+        p_mc     = mc$p.value,
+        lo95     = q[1],
+        hi95     = q[2]
+      )
+    })
+  
+  # Clean and standardise output format for joining with coefficient tables later
+  moran_results_clean <- moran_results %>%
+    mutate(
+      date = as.Date(hour, tz = "Europe/Berlin"),
+      hour = lubridate::hour(hour),
+      moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
+    ) %>%
+    dplyr::select(date, hour, moran_i, p_mc, moran_sig)
+  
+  # Save daily results into list
+  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
+}
+
+# Combine daily results into one table
+moran_summary <- dplyr::bind_rows(moran_summary_list)
 ```
 
 --------------------------------------------------------------------------------
