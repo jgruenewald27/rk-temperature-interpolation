@@ -908,7 +908,7 @@ for (i in seq_along(timestamps)) {
     locations = temp_shm.sf,
     model     = rvgm.temp,
     nfold     = nrow(temp_shm.sf),
-    nmax      = 10
+    nmax      = nrow(temp_shm.sf) - 1
   )
 
   # Compute CV performance metrics
@@ -935,7 +935,7 @@ for (i in seq_along(timestamps)) {
     locations = temp_shm.sf,
     model     = rvgm.temp,
     nfold     = nrow(temp_shm.sf),
-    nmax      = 10
+    nmax      = nrow(temp_shm.sf) - 1
   )
 
   rk_cv_rmse <- sqrt(mean(cv_rk$residual^2, na.rm = TRUE))
@@ -961,7 +961,7 @@ for (i in seq_along(timestamps)) {
     id = "residuals",
     formula = residuals ~ 1,
     data = temp_shm.sf,
-    nmax = 31,
+    nmax = nrow(temp_shm.sf) - 1,
     model = rvgm.temp
   )
 
