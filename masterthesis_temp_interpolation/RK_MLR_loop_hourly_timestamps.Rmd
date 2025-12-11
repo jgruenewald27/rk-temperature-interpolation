@@ -971,11 +971,20 @@ for (i in seq_along(timestamps)) {
   # Combine LM + kriged residuals
   rk.pred <- locTEMP.reg + locTEMP$residuals.pred
   grids_sp$rk_pred <- rk.pred
+  
+  # Export kriging variance
+  rk.var  <- locTEMP$residuals.var
+  grids_sp$rk_var  <- rk.var
 
   # Export predicitons as .tif
   rk_raster <- terra::rast(grids_sp["rk_pred"])
   rk_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_prediction.tif"))
   terra::writeRaster(rk_raster, rk_file_tif, overwrite = TRUE)
+  
+  # Export kriging variance as .tif
+  rk_var_raster <- terra::rast(grids_sp["rk_var"])
+  rk_var_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_variance.tif"))
+  terra::writeRaster(rk_var_raster, rk_var_file_tif, overwrite = TRUE)
   
   # Plot RK prediction map
   rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
@@ -984,6 +993,15 @@ for (i in seq_along(timestamps)) {
     spplot(grids_sp, "rk_pred",
            main = paste("Regression Kriging Prediction (°C)\n", dt_lab),   
            sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
+  dev.off()
+  
+  # Plot RK variance map
+  rk_var_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_variance_map.png"))
+  png(rk_var_file_img, width = 8, height = 6, units = "in", res = 300)
+  print(
+    spplot(grids_sp, "rk_var",
+      main = paste("Regression-Kriging Prediction Variance\n", dt_lab),
+      sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
   dev.off()
 
   ## ------------------------------------------------
