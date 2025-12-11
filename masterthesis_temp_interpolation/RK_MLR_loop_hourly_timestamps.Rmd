@@ -252,7 +252,7 @@ if (!all_same) {
 ```{r Create output folder}
 
 # Create output dirs
-output_dir <- "../try_RK_07_2023_12days"
+output_dir <- "../RK_07_2023_12days"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 variogram_dir <- file.path(output_dir, "variogram_fits")
@@ -285,7 +285,7 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 ## ------------------------------------------------
 
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
-start_date <- as.POSIXct("2023-07-12 01:00:00", tz = "Europe/Berlin")
+start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
 end_date   <- as.POSIXct("2023-07-12 23:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
 set.seed(12345)
