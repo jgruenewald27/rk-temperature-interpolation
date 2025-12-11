@@ -1011,12 +1011,12 @@ for (i in seq_along(timestamps)) {
   rk_bias <- mean(rk_eval$residual,     na.rm = TRUE)
 
   # Append RK metrics
-  rk_metrics_all <- data.frame(
+  rk_metrics_all <- rbind(rk_metrics_all, data.frame(
     timestamp = ts,
     rk_rmse   = rk_rmse,
     rk_mae    = rk_mae,
     rk_bias   = rk_bias
-  )
+  ))
 
   ## Progress bar update
   completed <- completed + 1L
