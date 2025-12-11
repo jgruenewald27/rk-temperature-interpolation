@@ -285,8 +285,8 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 ## ------------------------------------------------
 
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
-start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-12 23:00:00", tz = "Europe/Berlin")
+start_date <- as.POSIXct("2023-07-09 07:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-09 09:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
 set.seed(12345)
 
@@ -507,10 +507,9 @@ for (i in seq_along(timestamps)) {
     
       cand_models <- list(
         vgm(psill0, "Exp", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio)),
-        vgm(psill0, "Sph", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio)),
-        vgm(psill0, "Gau", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio))
+        vgm(psill0, "Sph", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio))
       )
-      model_labels <- c("Exp (anis)", "Sph (anis)", "Gau (anis)")
+      model_labels <- c("Exp (anis)", "Sph (anis)")
     
     } else {
     
@@ -518,10 +517,9 @@ for (i in seq_along(timestamps)) {
     
       cand_models <- list(
         vgm(psill0, "Exp", range0, nug0),
-        vgm(psill0, "Sph", range0, nug0),
-        vgm(psill0, "Gau", range0, nug0)
+        vgm(psill0, "Sph", range0, nug0)
       )
-      model_labels <- c("Exp", "Sph", "Gau")
+      model_labels <- c("Exp", "Sph")
     }
 
     cat("    Trying models: ", paste(model_labels, collapse = ", "), "\n")
@@ -601,16 +599,8 @@ for (i in seq_along(timestamps)) {
       cat("    → Using fallback *practical nugget* model.\n")
       rvgm.temp <- fallback.model
     }
-    }
+  }
   
-  # Save variogram plot
-  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
-  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
-  print(
-    plot(rv.temp, rvgm.temp, main = paste0("Residual Variogram Fit\n", dt_lab),
-         pch = 3, col = "black"))
-  dev.off()
-    
   ## ------------------------------------------------
   ## STEP 5a: CV of residual kriging
   ## ------------------------------------------------
@@ -689,6 +679,57 @@ for (i in seq_along(timestamps)) {
   # Predict LM trend and OK residuals
   locTEMP.reg <- predict(lm.temp_shm, newdata = pred_points)
   locTEMP     <- predict(g.resid, pred_points)
+  
+  # Fallback if kriging output wrong
+  
+  # Extract predicted residuals and variances
+  pred_resid  <- locTEMP$residuals.pred
+  pred_var    <- locTEMP$residuals.var
+  
+  total_cells <- length(pred_resid)
+  
+  # Condition: kriging failed if ANY of these are true
+  kriging_invalid <- (
+      any(!is.finite(pred_resid)) ||               # Inf / NaN predictions
+      any(!is.finite(pred_var))   ||               # Inf / NaN variances
+      sum(!is.finite(pred_var)) == total_cells ||  # ALL NA/Inf → complete failure
+      sum(!is.finite(pred_resid)) == total_cells   # ALL NA/Inf predictions
+  )
+  
+  if (kriging_invalid) {
+      cat("    WARNING: kriging output invalid → using fallback variogram.\n")
+  
+      # Refit using fallback model
+      rvgm.temp <- fallback.model
+  
+      # Rebuild gstat object using fallback
+      g.resid <- gstat(
+          id = "residuals",
+          formula = residuals ~ 1,
+          data = temp_shm.sf,
+          nmax = nrow(temp_shm.sf) - 1,
+          model = rvgm.temp
+      )
+  
+      # Re-run prediction with fallback model
+      locTEMP <- predict(g.resid, pred_points)
+  
+      pred_resid <- locTEMP$residuals.pred
+      pred_var   <- locTEMP$residuals.var
+  
+      # Re-check validity to prevent silent failure
+      if (any(!is.finite(pred_resid)) || any(!is.finite(pred_var))) {
+          stop("FATAL: Fallback variogram STILL produced invalid kriging output.")
+      }
+  }
+  
+  # Save variogram plot after fallback to also include these fits
+  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(rv.temp, rvgm.temp, main = paste0("Residual Variogram Fit\n", dt_lab),
+         pch = 3, col = "black"))
+  dev.off()
   
   # Prepare storage in the full grid
   grids_sp$rk_pred <- NA
