@@ -1053,18 +1053,18 @@ cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",
             completed, total, skipped))
 
 # Write variogram summary file
-out_file <- file.path(variogram_dir, "variogram_summary.csv")
+out_file <- file.path(output_dir, "variogram_summary.csv")
 write.csv(variogram_metrics_all, out_file, row.names = FALSE)
 cat("\nSaved variogram diagnostics to:\n  ", out_file, "\n")
 
 # Save MLR metrics
-metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
+metrics_file <- file.path(output_dir, "mlr_model_performance_summary.csv")
 if (exists("lm_metrics_all")) {                                     
   write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
 }
 
 # Save CV metrics
-cv_file <- file.path(output_dir, "cross_validation_metrics.csv")
+cv_file <- file.path(output_dir, "residuals_loocv_metrics.csv")
 if (exists("cv_metrics_all")) {                                     
   write.csv(cv_metrics_all, cv_file, row.names = FALSE)
 }
