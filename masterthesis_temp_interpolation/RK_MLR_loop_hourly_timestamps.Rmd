@@ -622,10 +622,10 @@ r_brick    <- raster::brick(grids_sp)
 grid_terra <- terra::rast(r_brick)
 
 ## Containers
-lm_metrics_all    <- NULL
-cv_metrics_all    <- NULL
-rk_cv_metrics_all <- NULL
-rk_metrics_all    <- NULL
+lm_metrics_all    <- data.frame()
+cv_metrics_all    <- data.frame()
+rk_cv_metrics_all <- data.frame()
+rk_metrics_all    <- data.frame()
 variogram_metrics_all <- data.frame()
 
 ## ------------------------------------------------
@@ -669,7 +669,7 @@ for (i in seq_along(timestamps)) {
   resid <- temp_shm.ex$hm_temp - pred
 
   # Store regression metrics
-  model_metrics <- rbind(lm_metrics_all, data.frame(
+  lm_metrics_all <- rbind(lm_metrics_all, data.frame(
     timestamp      = ts,
     r_squared      = summary_lm$r.squared,
     adj_r_squared  = summary_lm$adj.r.squared,
@@ -684,13 +684,6 @@ for (i in seq_along(timestamps)) {
     AIC            = AIC(lm.temp_shm),
     BIC            = BIC(lm.temp_shm)
   ))
-  
-  # Append results to cumulative LM table
-  if (!exists("lm_metrics_all")) {
-    lm_metrics_all <- model_metrics
-  } else {
-    lm_metrics_all <- rbind(lm_metrics_all, model_metrics)
-  }
 
   # Attach residuals to dataset and convert to sf for spatial operations
   temp_shm.ex$residuals <- resid
@@ -923,7 +916,7 @@ for (i in seq_along(timestamps)) {
   cv_me   <- mean(cv_resid$residual,     na.rm = TRUE)
 
   # Store CV results
-  cv_metrics <- rbind(cv_metrics_all, data.frame(
+  cv_metrics_all <- rbind(cv_metrics_all, data.frame(
     timestamp = ts,
     moran_I   = moran_I,
     moran_p   = moran_p,
@@ -931,12 +924,6 @@ for (i in seq_along(timestamps)) {
     cv_mae    = cv_mae,
     cv_bias   = cv_me
   ))
-  
-  if (!exists("cv_metrics_all")) {
-    cv_metrics_all <- cv_metrics
-  } else {
-    cv_metrics_all <- rbind(cv_metrics_all, cv_metrics)
-  }
 
   ## ------------------------------------------------
   ## STEP 4b: LOOCV for full RK
@@ -955,7 +942,7 @@ for (i in seq_along(timestamps)) {
   rk_cv_bias <- mean(cv_rk$residual,     na.rm = TRUE)
 
   # Store RK CV results
-  rk_cv_metrics <- rbind(rk_cv_metrics_all, data.frame(
+  rk_cv_metrics_all <- rbind(rk_cv_metrics_all, data.frame(
     timestamp   = ts,
     moran_I     = moran_I,
     moran_p     = moran_p,
@@ -963,12 +950,6 @@ for (i in seq_along(timestamps)) {
     rk_cv_mae   = rk_cv_mae,
     rk_cv_bias  = rk_cv_bias
   ))
-  
-  if (!exists("rk_cv_metrics_all")) {
-    rk_cv_metrics_all <- rk_cv_metrics
-  } else {
-    rk_cv_metrics_all <- rbind(rk_cv_metrics_all, rk_cv_metrics)
-  }
 
   ## ------------------------------------------------
   ## STEP 6: Regression–Kriging prediction
@@ -1037,12 +1018,6 @@ for (i in seq_along(timestamps)) {
     rk_bias   = rk_bias
   )
 
-  if (!exists("rk_metrics_all")) {
-    rk_metrics_all <- rk_metrics
-  } else {
-    rk_metrics_all <- rbind(rk_metrics_all, rk_metrics)
-  }
-
   ## Progress bar update
   completed <- completed + 1L
   setTxtProgressBar(pb, completed)
@@ -1066,33 +1041,24 @@ cat("\nSaved variogram diagnostics to:\n  ", out_file, "\n")
 # Save MLR metrics
 metrics_file <- file.path(output_dir, "lm_model_performance_summary.csv")
 if (exists("lm_metrics_all")) {                                     
-  lm_metrics_all$datetime_local <- ts_to_posix(lm_metrics_all$timestamp)   
-  lm_metrics_all <- lm_metrics_all %>% relocate(datetime_local, .after = timestamp)  
   write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
 }
 
 # Save CV metrics
 cv_file <- file.path(output_dir, "cross_validation_metrics.csv")
 if (exists("cv_metrics_all")) {                                     
-  cv_metrics_all$datetime_local <- ts_to_posix(cv_metrics_all$timestamp) 
-  cv_metrics_all <- cv_metrics_all %>% relocate(datetime_local, .after = timestamp) 
   write.csv(cv_metrics_all, cv_file, row.names = FALSE)
 }
 
 # Save RK LOOCV metrics
 rk_cv_file <- file.path(output_dir, "rk_loocv_metrics.csv")
 if (exists("rk_cv_metrics_all")) {
-  rk_cv_metrics_all$datetime_local <- ts_to_posix(rk_cv_metrics_all$timestamp)
-  rk_cv_metrics_all <- rk_cv_metrics_all %>%
-    relocate(datetime_local, .after = timestamp)
   write.csv(rk_cv_metrics_all, rk_cv_file, row.names = FALSE)
 }
 
 # Save RK metrics
 rk_file <- file.path(output_dir, "rk_metrics.csv")
 if (exists("rk_metrics_all")) {                                   
-  rk_metrics_all$datetime_local <- ts_to_posix(rk_metrics_all$timestamp)
-  rk_metrics_all <- rk_metrics_all %>% relocate(datetime_local, .after = timestamp) 
   write.csv(rk_metrics_all, rk_file, row.names = FALSE)
 }
 ```
