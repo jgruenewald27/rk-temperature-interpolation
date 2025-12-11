@@ -1011,7 +1011,7 @@ for (i in seq_along(timestamps)) {
   rk_bias <- mean(rk_eval$residual,     na.rm = TRUE)
 
   # Append RK metrics
-  rk_metrics <- data.frame(
+  rk_metrics_all <- data.frame(
     timestamp = ts,
     rk_rmse   = rk_rmse,
     rk_mae    = rk_mae,
