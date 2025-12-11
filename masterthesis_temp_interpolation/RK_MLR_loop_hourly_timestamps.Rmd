@@ -285,8 +285,8 @@ file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")
 ## ------------------------------------------------
 
 timestamps_all <- sort(unique(temp_clean_station_hm$hour))
-start_date <- as.POSIXct("2023-07-09 07:00:00", tz = "Europe/Berlin")
-end_date   <- as.POSIXct("2023-07-09 09:00:00", tz = "Europe/Berlin")
+start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-12 23:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
 set.seed(12345)
 
