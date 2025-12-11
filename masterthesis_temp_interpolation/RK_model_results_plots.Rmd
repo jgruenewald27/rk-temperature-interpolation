@@ -31,7 +31,7 @@ Plots to analyse model performance metrics for 12 days
 ```{r Read performance metrics}
 
 # Read MLR metrics
-lm_metrics <- read.csv("../RK_07_2023_12days/lm_model_performance_summary.csv",
+lm_metrics <- read.csv("../RK_07_2023_12days/mlr_model_performance_summary.csv",
                        stringsAsFactors = FALSE)
 # Read LOOCV metrics
 rk_cv_metrics <- read.csv("../RK_07_2023_12days/rk_loocv_metrics.csv",
@@ -117,8 +117,8 @@ p_lm <- ggplot(lm_metrics_long, aes(x = hour, y = value, color = metric, group =
 p_lm
 
 # Save plot
-ggsave("../plots_report/MLR_RK_metrics_12days.png", 
-       plot = p_lm, width = 12, height = 8, dpi = 300)
+# ggsave("../plots_report/MLR_RK_metrics_12days.png", 
+#        plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse LOOCV metrics 12 days}
@@ -143,13 +143,7 @@ p_loocv <- ggplot(rk_cv_metrics_long, aes(x = hour, y = value, color = metric, g
       name = "",
       values = c("Perfect Prediction (Error = 0)" = "dotted")
     ) +
-    labs(
-      title    = "Daily Variation Regression-Kriging LOOCV Performance",
-      subtitle = "Hourly RMSE and MAE from leave-one-out cross-validation of hourly temperature models",
-      x        = "Hour of the Day",
-      y        = "Error Metric [°C]",
-      color    = "Metrics"
-    ) +
+    labs(x = "Hour of the Day", y = "Error Metric [°C]", color    = "Metrics") +
     scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
     theme_minimal(base_size = 14) +
     theme(
@@ -166,8 +160,8 @@ p_loocv <- ggplot(rk_cv_metrics_long, aes(x = hour, y = value, color = metric, g
 p_loocv
 
 # Save plot
-ggsave("../plots_report/LOOCV_RK_metrics_12days.png", 
-       plot = p_loocv, width = 12, height = 8, dpi = 300)
+# ggsave("../plots_report/LOOCV_RK_metrics_12days.png",
+#        plot = p_loocv, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse RK metrics 12 days}
@@ -211,8 +205,8 @@ p_rk <- ggplot(rk_metrics_long, aes(x = hour, y = value, color = metric, group =
 p_rk
 
 # Save plot
-ggsave("../plots_report/RK_metrics_12days.png", 
-       plot = p_rk, width = 12, height = 8, dpi = 300)
+# ggsave("../plots_report/RK_metrics_12days.png", 
+#        plot = p_rk, width = 12, height = 8, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
