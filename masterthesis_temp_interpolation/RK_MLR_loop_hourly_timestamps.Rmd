@@ -606,6 +606,7 @@ timestamps_all <- sort(unique(temp_clean_station_hm$hour))
 start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
 end_date   <- as.POSIXct("2023-07-01 03:00:00", tz = "Europe/Berlin")
 timestamps <- timestamps_all[timestamps_all >= start_date & timestamps_all <= end_date]
+set.seed(12345)
 
 cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
 
