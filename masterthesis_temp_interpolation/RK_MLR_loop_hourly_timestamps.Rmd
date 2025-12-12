@@ -766,7 +766,7 @@ for (i in seq_along(timestamps)) {
   png(rk_file_img, width = 8, height = 6, units = "in", res = 300)
   print(
     spplot(grids_sp, "rk_pred",
-           main = paste("Regression Kriging Prediction (°C)\n", dt_lab),   
+           main = paste("Regression Kriging Prediction [°C]\n", dt_lab),   
            sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
   dev.off()
   
