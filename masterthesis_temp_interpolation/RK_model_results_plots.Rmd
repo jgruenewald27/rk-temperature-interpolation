@@ -117,8 +117,8 @@ p_lm <- ggplot(lm_metrics_long, aes(x = hour, y = value, color = metric, group =
 p_lm
 
 # Save plot
-# ggsave("../plots_report/MLR_RK_metrics_12days.png", 
-#        plot = p_lm, width = 12, height = 8, dpi = 300)
+ggsave("../plots_report/MLR_RK_metrics_12days.png",
+       plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse LOOCV metrics 12 days}
@@ -160,8 +160,8 @@ p_loocv <- ggplot(rk_cv_metrics_long, aes(x = hour, y = value, color = metric, g
 p_loocv
 
 # Save plot
-# ggsave("../plots_report/LOOCV_RK_metrics_12days.png",
-#        plot = p_loocv, width = 12, height = 8, dpi = 300)
+ggsave("../plots_report/LOOCV_RK_metrics_12days.png",
+       plot = p_loocv, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse RK metrics 12 days}
@@ -205,8 +205,8 @@ p_rk <- ggplot(rk_metrics_long, aes(x = hour, y = value, color = metric, group =
 p_rk
 
 # Save plot
-# ggsave("../plots_report/RK_metrics_12days.png", 
-#        plot = p_rk, width = 12, height = 8, dpi = 300)
+ggsave("../plots_report/RK_metrics_12days.png",
+       plot = p_rk, width = 12, height = 8, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
@@ -284,7 +284,7 @@ cv_weather_combined <- rk_cv_metrics_join %>%
 
 # Selecting mean weather variables relevant for plotting
 weather_vars <- c(
-  "temperature_mean", "relativehumidity_mean", "dewpoint_mean",
+  "relativehumidity_mean", "dewpoint_mean",
   "windspeed_mean", "solarradiation_mean",
   "precipitation_mean", "pressure_mean"
 )
@@ -303,7 +303,6 @@ nice_names <- c(
   pressure_mean = "Pressure",
   relativehumidity_mean = "Relative Humidity",
   solarradiation_mean = "Solar Radiation",
-  temperature_mean = "Temperature",
   windspeed_mean = "Wind Speed"
 )
 
@@ -313,12 +312,7 @@ rel_rmse_weather <- ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
   geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
   facet_wrap(~ variable, scales = "free_x", labeller = labeller(variable = nice_names)) +
   theme_minimal(base_size = 14) +
-  labs(
-    title = "Relationship Between RK LOOCV RMSE and Hourly Mean Weather Variables",
-    subtitle = "Hourly means (1–12 July 2023) compared against RK LOOCV model error",
-    x = "Weather Variable Value",
-    y = "RMSE [°C]"
-  ) +
+  labs(x = "Meteorological variable hourly mean", y = "RMSE [°C]") +
   theme(
     legend.position   = "top",
     panel.grid.minor  = element_blank(),
@@ -356,14 +350,8 @@ di_weather <- ggplot(df_long, aes(
   ) +
   facet_wrap(~ variable, scales = "free_y", labeller = labeller(variable = nice_names)) +
   theme_minimal(base_size = 14) +
-  labs(
-    title = "Diurnal Patterns of Hourly Mean Weather Variables and Their Influence on RK Model Performance",
-    subtitle = "Hourly means (1–12 July 2023) with LOOCV RK RMSE to highlight performance variation across the diurnal cycle",
-    x = "Hour of the Day",
-    y = "Weather Variable Value",
-    color = "RMSE [°C]",
-    size  = "RMSE [°C]"
-  ) +
+  labs(x = "Hour of the Day", y = "Meteorological variable hourly mean", color = "RMSE [°C]",
+       size  = "RMSE [°C]") +
   theme(
     legend.position = "bottom",
     panel.grid.minor  = element_blank(),
