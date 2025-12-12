@@ -50,7 +50,7 @@ RK temperature prediction surface
 ```{r Compare the Stadtklima-Analyse with my RK prediction surface}
 
 # Load rasters and vector data
-mod  <- rast("../RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction_map.tif")
+mod  <- rast("../RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction.tif")
 ref5 <- rast("../data/stadtklimaanalyse_2023/2_22_074_ist_t14_rev01.tif")
 river <- st_read("../data/waterways/waterways_HD.gpkg")                 
 landuse <- st_read("../data/copernicus_LULC/DE522L1_HEIDELBERG_UA2018_v013.gpkg")
@@ -167,7 +167,7 @@ p_rk_map <- ggplot() +
   annotation_scale(location = "br", width_hint = 0.3) +    
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(title = "RK Model Temperature Distribution",
+  labs(
       subtitle = sprintf("Timestamp: 2023-07-09 14:00\nTemperature value range: %.1f – %.1f °C", 
                          min(mod_df$value, na.rm = TRUE), max(mod_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
@@ -190,8 +190,8 @@ p_ref_map <- ggplot() +
   annotation_scale(location = "br", width_hint = 0.3) +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(title = "Urban Climate Analysis Heidelberg (2023)",
-       subtitle = sprintf("PET value range: %.1f – %.1f °C", 
+  labs(
+       subtitle = sprintf("Physiologically Equivalent Temperature (PET) value range: %.1f – %.1f °C", 
                           min(ref_df$value, na.rm = TRUE), max(ref_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
@@ -203,9 +203,12 @@ p_ref_map <- ggplot() +
                                  margin = margin(t = 1, b = 5))
   )
 
-# # Combine both plots with shared legend  
-# p_rk_ref <- (p_rk_map + p_ref_map + 
-#                     plot_layout(guides = "collect") & 
+
+
+
+# Combine both plots with shared legend
+# p_rk_ref <- (p_rk_map + p_ref_map +
+#                     plot_layout(guides = "collect") &
 #                     theme(legend.position = "right")) +
 #   plot_annotation(
 #     title = "Comparison of RK and Reference Temperature Maps — Heidelberg, 09-07-2023 14:00",
@@ -218,7 +221,9 @@ p_ref_map
 p_rk_map
 
 # Save as PNG
-#ggsave("../plots/rk_vs_ref_14-00.png", p_rk_ref, width = 10, height = 5, dpi = 300)
+ggsave("../plots_report/rk_14-00.png", p_rk_map, width = 10, height = 5, dpi = 300)
+
+ggsave("../plots_report/urban_model_14-00.png", p_ref_map, width = 10, height = 5, dpi = 300)
 ```
 
 
@@ -259,9 +264,8 @@ p_resid_hist <- ggplot(data.frame(resid), aes(x = resid)) +
   geom_histogram(bins = 60, fill = "steelblue", color = "white", alpha = 0.8) +
   geom_vline(xintercept = 0, color = "black", linetype = "dashed", linewidth = 0.6) +
   labs(
-    title = "Residual Distribution (RK Model − Urban Climate Analysis HD, 09-07-2023 14:00)",
     subtitle = sprintf("Mean bias = %.2f °C", mean(resid)),
-    x = "Residual (Model − Reference) [°C]",
+    x = "Residuals (RK predictions − Urban Climate Analysis) [°C]",
     y = "Number of cells"
   ) +
   theme_minimal(base_size = 13) +
@@ -293,7 +297,7 @@ p_resid_map <- ggplot() +
   geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.5) +
   scale_fill_gradient2(
-    name = "Residual (°C)",
+    name = "Residuals (°C)",
     low = "#2166ac", mid = "white", high = "#b2182b",
     midpoint = 0,
     limits = c(-rmax, rmax),
@@ -305,7 +309,6 @@ p_resid_map <- ggplot() +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
   labs(
-    title = "Spatial Distribution of Residuals (RK Model − Urban Climate Analysis HD) on 09-07-2023 at 14:00 [°C]",
     subtitle = "Blue: Model colder than reference | Red: Model warmer than reference"
   ) +
   theme_minimal(base_size = 13) +
@@ -325,9 +328,9 @@ p_resid_hist
 p_resid_map
 
 # Save as PNG
-ggsave("../plots/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
+ggsave("../plots_report/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
 
-ggsave("../plots/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
+ggsave("../plots_report/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
 ```
 
 
