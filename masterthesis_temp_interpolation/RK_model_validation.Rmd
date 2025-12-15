@@ -47,13 +47,58 @@ library(car)
 Comparison of the Urban Climate Analysis of HD (2023) with the 
 RK temperature prediction surface
 
+```{r Prepare OSM LULC}
+
+# Read OSM LULC raster
+osm_lulc  <- rast("../data/OSM_LULC/hd_osm_landuse_4326.tif")
+
+# Assign class labels
+lulc_classes <- data.frame(
+  value = c(
+    5,   # Water bodies
+    11,  # Urban fabric
+    12,  # Industrial, commercial and transport units
+    13,  # Mine, dump and construction sites
+    14,  # Artificial, non-agricultural vegetated areas
+    21,  # Arable land
+    22,  # Permanent crops
+    23,  # Pastures
+    31,  # Forests
+    32,  # Shrub and/or herbaceous vegetation associations
+    33,  # Open spaces with little or no vegetation
+    41   # Wetlands
+  ),
+  class_name = c(
+    "Water bodies",
+    "Urban fabric",
+    "Industrial, commercial and transport units",
+    "Mine, dump and construction sites",
+    "Artificial, non-agricultural vegetated areas",
+    "Arable land",
+    "Permanent crops",
+    "Pastures",
+    "Forests",
+    "Shrub and/or herbaceous vegetation associations",
+    "Open spaces with little or no vegetation",
+    "Wetlands"
+  )
+)
+
+# Convert to polygon
+lulc_polygons <- as.polygons(osm_lulc, dissolve = TRUE)
+
+# Save output as geopackage
+writeVector(lulc_polygons, "../data/OSM_LULC/hd_osm_lulc_polygons.gpkg", overwrite = TRUE)
+```
+
+
 ```{r Compare the Stadtklima-Analyse with my RK prediction surface}
 
 # Load rasters and vector data
 mod  <- rast("../RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction.tif")
 ref5 <- rast("../data/stadtklimaanalyse_2023/2_22_074_ist_t14_rev01.tif")
 river <- st_read("../data/waterways/waterways_HD.gpkg")                 
-landuse <- st_read("../data/copernicus_LULC/DE522L1_HEIDELBERG_UA2018_v013.gpkg")
+landuse <- st_read("../data/OSM_LULC/hd_osm_lulc_polygons.gpkg")
 
 # Check if model has CRS
 if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first.")
