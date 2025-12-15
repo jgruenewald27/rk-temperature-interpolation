@@ -91,7 +91,6 @@ lulc_polygons <- as.polygons(osm_lulc, dissolve = TRUE)
 writeVector(lulc_polygons, "../data/OSM_LULC/hd_osm_lulc_polygons.gpkg", overwrite = TRUE)
 ```
 
-
 ```{r Compare the Stadtklima-Analyse with my RK prediction surface}
 
 # Load rasters and vector data
@@ -99,6 +98,7 @@ mod  <- rast("../RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction.
 ref5 <- rast("../data/stadtklimaanalyse_2023/2_22_074_ist_t14_rev01.tif")
 river <- st_read("../data/waterways/waterways_HD.gpkg")                 
 landuse <- st_read("../data/OSM_LULC/hd_osm_lulc_polygons.gpkg")
+osm_lulc <- rast("../data/OSM_LULC/hd_osm_landuse_4326.tif")
 
 # Check if model has CRS
 if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first.")
@@ -107,6 +107,7 @@ if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first.")
 crs_mod <- crs(mod, proj = TRUE)
 crs(ref5) <- "EPSG:32632"
 ref30 <- project(ref5, mod, method = "bilinear")
+osm_lulc <- project(osm_lulc, mod, method = "near")
 
 # Reproject vector layers to project CRS
 crs_mod <- crs(mod, proj = TRUE)
@@ -117,6 +118,7 @@ landuse   <- st_transform(landuse,   crs = crs_mod)
 # Crop and mask rasters by AOI
 mod    <- mask(crop(mod,    vect(hd_bounds)), vect(hd_bounds))
 ref30  <- mask(crop(ref30,  vect(hd_bounds)), vect(hd_bounds))
+osm_lulc <- mask(crop(osm_lulc,  vect(hd_bounds)), vect(hd_bounds))
 
 # Clip vector layers to AOI
 river <- st_intersection(river, hd_bounds)
@@ -127,6 +129,8 @@ stopifnot(terra::same.crs(ref30, mod))
 print(st_crs(hd_bounds)$input)
 stopifnot(isTRUE(all.equal(res(mod),  res(ref30))))
 stopifnot(isTRUE(all.equal(ext(mod),  ext(ref30))))
+stopifnot(isTRUE(all.equal(res(mod),  res(osm_lulc))))
+stopifnot(isTRUE(all.equal(ext(mod),  ext(osm_lulc))))
 ```
 
 ```{r Model–Reference Temperature Comparison and Metrics}
@@ -141,9 +145,9 @@ mod_h[!both_mask]   <- NA
 ref30_h[!both_mask] <- NA
 
 # Extract cell values from both rasters
-vr <- values(c(mod_h, ref30_h))           
-colnames(vr) <- c("rk_temp", "ref_temp")  # rename columns
-comparison_df <- as.data.frame(vr) |> drop_na() 
+vr <- values(c(mod_h, ref30_h, osm_lulc))
+colnames(vr) <- c("rk_temp", "ref_temp", "lu")
+comparison_df <- as.data.frame(vr) |> drop_na()
 
 # Calculate comparison metrics
 pearson_r <- cor(comparison_df$rk_temp, comparison_df$ref_temp, method = "pearson")
@@ -416,17 +420,15 @@ landuse <- landuse %>%
   mutate(diff = rk_mean - ref_mean)
 
 # Summarize by land use class
-landuse_summary <- landuse %>%
-  st_drop_geometry() %>%
-  group_by(class_2018) %>%
+corr_by_class <- comparison_df |>
+  group_by(lu) |>
   summarise(
-    rk_mean   = mean(rk_mean, na.rm = TRUE),
-    ref_mean  = mean(ref_mean, na.rm = TRUE),
-    diff_mean = mean(diff, na.rm = TRUE),
-    corr      = cor(rk_mean, ref_mean, use = "complete.obs")
+    n = n(),
+    pearson  = if (n >= 2) cor(rk_temp, ref_temp) else NA_real_,
+    spearman = if (n >= 2) cor(rk_temp, ref_temp, method = "spearman") else NA_real_,
+    bias     = mean(rk_temp - ref_temp),
+    rmse     = sqrt(mean((rk_temp - ref_temp)^2))
   )
-
-print(landuse_summary)
 ```
 
 
@@ -434,78 +436,81 @@ print(landuse_summary)
 
 # Define color palette for land cover classes based on CORINE
 landcover_colors <- c(
-  "Continuous Urban fabric (S.L. > 80%)" = "#a40000",
-  "Discontinuous Dense Urban Fabric (S.L.: 50% - 80%)" = "#d73027",
-  "Discontinuous Medium Density Urban Fabric (S.L.: 30% - 50%)" = "#f46d43",
-  "Discontinuous Low Density Urban Fabric (S.L.: 10% - 30%)" = "#fdae61",
-  "Discontinuous very Low Density Urban Fabric (S.L.: < 10%)" = "#fee090",
-  "Isolated Structures" = "#ffffbf",
-  "Industrial, commercial, public, military and private units" = "#bdbdbd",
-  "Fast transit roads and associated land" = "#969696",
-  "Other roads and associated land" = "#636363",
-  "Railways and associated land" = "#252525",
-  "Port areas" = "#878787",
-  "Airports" = "#cccccc",
-  "Mineral extraction and dump sites" = "#ffcc99",
-  "Construction sites" = "#ffeda0",
-  "Land without current use" = "#f0f0f0",
-  "Green urban areas" = "#78c679",
-  "Sports and leisure facilities" = "#41ab5d",
-  "Arable land (annual crops)" = "#e6ab02",
-  "Permanent crops" = "#fee391",
-  "Pastures" = "#a1d99b",
-  "Complex and mixed cultivation patterns" = "#c2e699",
-  "Orchards" = "#addd8e",
-  "Forests" = "#006837",
-  "Herbaceous vegetation associations" = "#31a354",
-  "Open spaces with little or no vegetation" = "#d9f0a3",
-  "Wetlands" = "#80cdc1",
-  "Water" = "#67a9cf"
+  "Water bodies" = "#2daae1",
+
+  "Urban fabric" = "#e6004d",
+  "Industrial, commercial and transport units" = "#c04be6",
+  "Mine, dump and construction sites" = "#8c2d8f",
+  "Artificial, non-agricultural vegetated areas" = "#f1b6da",
+
+  "Arable land" = "#ffffb2",
+  "Permanent crops" = "#e68026",
+  "Pastures" = "#d9ef8b",
+
+  "Forests" = "#1a9850",
+  "Shrub and/or herbaceous vegetation associations" = "#a6d96a",
+  "Open spaces with little or no vegetation" = "#e0f3db",
+
+  "Wetlands" = "#b2b2ff"
 )
+
+lu_lookup <- c(
+  "5"  = "Water bodies",
+
+  "11" = "Urban fabric",
+  "12" = "Industrial, commercial and transport units",
+  "13" = "Mine, dump and construction sites",
+  "14" = "Artificial, non-agricultural vegetated areas",
+
+  "21" = "Arable land",
+  "22" = "Permanent crops",
+  "23" = "Pastures",
+
+  "31" = "Forests",
+  "32" = "Shrub and/or herbaceous vegetation associations",
+  "33" = "Open spaces with little or no vegetation",
+
+  "41" = "Wetlands"
+)
+
 ```
 
 ```{r Correlation by land cover class}
 
-# Summarise model–reference correlation by land cover class
-cor_summary <- landuse %>%
-  st_drop_geometry() %>%
-  group_by(class_2018) %>%
-  summarise(
-    n = n(),
-    corr = cor(rk_mean, ref_mean, use = "complete.obs"),
-    rk_mean = mean(rk_mean, na.rm = TRUE),
-    ref_mean = mean(ref_mean, na.rm = TRUE),
-    diff_mean = mean(rk_mean - ref_mean, na.rm = TRUE)
-  ) %>%
-  arrange(desc(corr))
+# Add a factor column to your data
+corr_by_class$lu_label <- factor(
+  lu_lookup[as.character(corr_by_class$lu)],
+  levels = names(landcover_colors)
+)
 
-# remove classes without valid correlations
-cor_summary <- cor_summary %>% filter(!is.na(corr))
+# corr_by_class <- corr_by_class %>%
+#   mutate(
+#     lu_label_n = paste0(lu_label, " (n = ", n, ")")
+#   )
 
 # Plot correlation by land cover class
-p_landcover_corr <- ggplot(cor_summary, aes(
-  x = reorder(class_2018, corr), 
-  y = corr,                      
-  fill = class_2018               
-)) +
-  geom_col(width = 0.6, color = "grey30") +                         
-  geom_text(aes(label = sprintf("%.2f", corr)),         
-            hjust = -0.1, size = 3, color = "black") +
-  scale_fill_manual(values = landcover_colors) +                
-  coord_flip() +                                                    
-  geom_hline(yintercept = 0, color = "grey50", linetype = "dashed") + 
-  labs(
-    title = "Temperature Correlation by Land Cover Class (09 July 2023, 14:00)",
-    subtitle = "Pearson’s r between RK model in °C and reference PET",
-    caption = "Data: RK model output, Urban Climate Analysis Heidelberg (2023),\nUrban Atlas Land Cover/Land Use (2018), Europe, 6-yearly",
-    x = NULL,
-    y = "Pearson Correlation (r)"
+p_landcover_corr <- ggplot(
+  corr_by_class,
+  aes(
+    x = reorder(lu_label_n, pearson),
+    y = pearson,
+    fill = lu_label
+  )
+) +
+  geom_col(width = 0.6, color = "grey30") +
+  geom_text(
+    aes(label = sprintf("%.2f", pearson)),
+    hjust = -0.1, size = 3
   ) +
+  scale_fill_manual(values = landcover_colors) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color = "grey50", linetype = "dashed") +
+  labs(x = NULL, y = "Pearson Correlation (r)") +
   theme_bw(base_size = 13) +
   theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 14), 
-    plot.subtitle = element_text(hjust = 0.5, size = 10, margin = margin(b = 8)), 
-    legend.position = "none",                                          
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "none",
     axis.text.y = element_text(size = 9),
     panel.grid.minor = element_blank(),
     panel.grid.major.y = element_blank()
@@ -515,7 +520,90 @@ p_landcover_corr <- ggplot(cor_summary, aes(
 p_landcover_corr
 
 # Save as PNG
-ggsave("../plots/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+ggsave("../plots_report/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+
+# Plot correlation by land cover class
+p_landcover_corr <- ggplot(
+  corr_by_class,
+  aes(
+    x = reorder(lu_label_n, rmse),
+    y = rmse,
+    fill = lu_label
+  )
+) +
+  geom_col(width = 0.6, color = "grey30") +
+  geom_text(
+    aes(label = sprintf("%.2f", rmse)),
+    hjust = -0.1, size = 3
+  ) +
+  scale_fill_manual(values = landcover_colors) +
+  coord_flip() +
+  geom_hline(yintercept = 0, color = "grey50", linetype = "dashed") +
+  labs(x = NULL, y = "RMSE [°C]") +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "none",
+    axis.text.y = element_text(size = 9),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+# Display the plots
+p_landcover_corr
+
+# Save as PNG
+ggsave("../plots_report/landcover_rmse_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+```
+
+```{r}
+library(patchwork)
+
+# Pearson plot
+p_r <- ggplot(
+  corr_by_class,
+  aes(
+    x = reorder(lu_label_n, pearson),
+    y = pearson,
+    fill = lu_label
+  )
+) +
+  geom_col(width = 0.6, color = "grey30") +
+  geom_text(aes(label = sprintf("%.2f", pearson)), hjust = -0.1, size = 3) +
+  scale_fill_manual(values = landcover_colors) +
+  coord_flip() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  labs(x = NULL, y = "Pearson r") +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+# RMSE plot
+p_rmse <- ggplot(
+  corr_by_class,
+  aes(
+    x = reorder(lu_label_n, pearson),
+    y = rmse,
+    fill = lu_label
+  )
+) +
+  geom_col(width = 0.6, color = "grey30") +
+  geom_text(aes(label = sprintf("%.2f", rmse)), hjust = -0.1, size = 3) +
+  scale_fill_manual(values = landcover_colors) +
+  coord_flip() +
+  labs(x = NULL, y = "RMSE (°C)") +
+  theme_bw(base_size = 12) +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+
 ```
 
 --------------------------------------------------------------------------------
