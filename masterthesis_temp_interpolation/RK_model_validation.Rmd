@@ -613,7 +613,7 @@ crs(rk_sd_df)
 
 # Plot Temporal variability of hourly RK predictions
 # Standard deviation of hourly air temperature (July 2023)
-ggplot(rk_sd_df, aes(x = x, y = y, fill = sd_temp)) +
+temp_var <- ggplot(rk_sd_df, aes(x = x, y = y, fill = sd_temp)) +
   geom_raster() +
   coord_equal() +
   scale_fill_viridis_c(
@@ -621,6 +621,9 @@ ggplot(rk_sd_df, aes(x = x, y = y, fill = sd_temp)) +
     option = "viridis",
     direction = 1
   ) +
+  annotation_scale(location = "br", width_hint = 0.3) +    
+  annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
   labs(x = NULL, y = NULL) +
   theme_minimal(base_size = 13) +
   theme(
@@ -629,6 +632,10 @@ ggplot(rk_sd_df, aes(x = x, y = y, fill = sd_temp)) +
     plot.title = element_text(face = "bold")
   )
 
+temp_var
+
+# Save as PNG
+ggsave("../plots_report/temporal_sd_hourly_rk_predictions.png", temp_var, width = 10, height = 5, dpi = 300)
 ```
 
 
