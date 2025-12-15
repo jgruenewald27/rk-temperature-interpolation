@@ -99,6 +99,7 @@ ref5 <- rast("../data/stadtklimaanalyse_2023/2_22_074_ist_t14_rev01.tif")
 river <- st_read("../data/waterways/waterways_HD.gpkg")                 
 landuse <- st_read("../data/OSM_LULC/hd_osm_lulc_polygons.gpkg")
 osm_lulc <- rast("../data/OSM_LULC/hd_osm_landuse_4326.tif")
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
 
 # Check if model has CRS
 if (is.na(crs(mod))) stop("`mod` has no CRS. Set it first.")
@@ -110,8 +111,8 @@ ref30 <- project(ref5, mod, method = "bilinear")
 osm_lulc <- project(osm_lulc, mod, method = "near")
 
 # Reproject vector layers to project CRS
+hd_bounds <- st_transform(hd_bounds, crs = "EPSG: 32632")
 crs_mod <- crs(mod, proj = TRUE)
-hd_bounds <- st_transform(hd_bounds, crs = crs_mod)
 river     <- st_transform(river,     crs = crs_mod)
 landuse   <- st_transform(landuse,   crs = crs_mod)
 
@@ -483,10 +484,10 @@ corr_by_class$lu_label <- factor(
   levels = names(landcover_colors)
 )
 
-# corr_by_class <- corr_by_class %>%
-#   mutate(
-#     lu_label_n = paste0(lu_label, " (n = ", n, ")")
-#   )
+corr_by_class <- corr_by_class %>%
+  mutate(
+    lu_label_n = paste0(lu_label, " (n = ", n, ")")
+  )
 
 # Plot correlation by land cover class
 p_landcover_corr <- ggplot(
@@ -600,16 +601,12 @@ plot(c(mm_july_rk, rk_mean_july, rk_sd_july),
 
 ```{r Plot temporal variability of hourly RK predictions}
 
-hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
-hd_bounds <- st_transform(hd_bounds, crs = "EPSG: 32632")
 
 rk_sd_july_clip <- terra::mask(rk_sd_july_clip, hd_bounds)
 
 # Convert raster to data frame
 rk_sd_df <- as.data.frame(rk_sd_july_clip, xy = TRUE, na.rm = TRUE)
 names(rk_sd_df)[3] <- "sd_temp"
-
-crs(rk_sd_df)
 
 # Plot Temporal variability of hourly RK predictions
 # Standard deviation of hourly air temperature (July 2023)
