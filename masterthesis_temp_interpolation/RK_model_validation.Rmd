@@ -557,55 +557,6 @@ p_landcover_corr
 ggsave("../plots_report/landcover_rmse_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
 ```
 
-```{r}
-library(patchwork)
-
-# Pearson plot
-p_r <- ggplot(
-  corr_by_class,
-  aes(
-    x = reorder(lu_label_n, pearson),
-    y = pearson,
-    fill = lu_label
-  )
-) +
-  geom_col(width = 0.6, color = "grey30") +
-  geom_text(aes(label = sprintf("%.2f", pearson)), hjust = -0.1, size = 3) +
-  scale_fill_manual(values = landcover_colors) +
-  coord_flip() +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
-  labs(x = NULL, y = "Pearson r") +
-  theme_bw(base_size = 12) +
-  theme(
-    legend.position = "none",
-    panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank()
-  )
-
-# RMSE plot
-p_rmse <- ggplot(
-  corr_by_class,
-  aes(
-    x = reorder(lu_label_n, pearson),
-    y = rmse,
-    fill = lu_label
-  )
-) +
-  geom_col(width = 0.6, color = "grey30") +
-  geom_text(aes(label = sprintf("%.2f", rmse)), hjust = -0.1, size = 3) +
-  scale_fill_manual(values = landcover_colors) +
-  coord_flip() +
-  labs(x = NULL, y = "RMSE (°C)") +
-  theme_bw(base_size = 12) +
-  theme(
-    legend.position = "none",
-    panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank()
-  )
-
-
-```
-
 --------------------------------------------------------------------------------
 
 Comparison of the monthly mean temperature surface with the 
