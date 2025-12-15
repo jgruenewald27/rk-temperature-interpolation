@@ -49,3 +49,9 @@ adapted_variogram_RK_07_2023_12days/rk_predictions/2023-07-01_0000_rk_prediction
 /RK_07_2023_13-15days
 /old_RK_07_2023_12days
 /try_RK_07_2023_12days
+data/OSM_LULC/hd_osm_landuse_4326.tif.aux.xml
+data/temp_HD/station_coords.gpkg
+data/temp_HD/station_coords.gpkg-shm
+data/temp_HD/station_coords.gpkg-wal
+/Monthly_RK_2023
+/RK_Monthly_Mean_older_version
