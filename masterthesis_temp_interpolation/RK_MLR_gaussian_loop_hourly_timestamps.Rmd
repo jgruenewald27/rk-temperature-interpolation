@@ -1,5 +1,5 @@
 ---
-title: "tree_canopy_gaussian"
+title: "RK_MLR_gaussian_loop_hourly_timestamps"
 output: html_document
 date: "2025-12-01"
 ---
@@ -46,20 +46,70 @@ library(lattice)
 library(car)
 ```
 
-```{r Load and preprocess data}
+--------------------------------------------------------------------------------
+
+```{r Load temp data}
+
+# Complete data import and pre-processing of the temperature (July 2023)
+
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs="EPSG:32632")
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 
+# 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Check if exactly 5 stations were dropped
+cat("Number of stations BEFORE cleaning: ",
+    length(unique(na.omit(temp_clean$entity_id))), "\n")
+
+cat("Number of stations AFTER cleaning:  ",
+    length(unique(na.omit(temp_clean_station$entity_id))), "\n")
+
+# Calculate hourly mean temp for cleaned data
+temp_clean_station_hm <- temp_clean_station %>%
+    mutate(hour = floor_date(dateobserved, unit = "hour")) %>%   # round down
+    group_by(entity_id, hour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
+```
+
+```{r Load and preprocess covariates}
 
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
-# Import pre-processed hourly means, AOI and station coords
+#Shortcut -> import pre-processed hourly means
 temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
-hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
-station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+
+# Reproject pre-processed temp data
+temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
 
 # Drop Gaiberg station as it is outside of AOI
 temp_clean_station_hm <- temp_clean_station_hm %>%
   filter(!entity_id %in% c(
     "hd:DE_Gaiberg_69251_21:WeatherObserved"
   ))
+
+# Import AOI and station coords
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
@@ -71,32 +121,29 @@ ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
 tch[tch == 101] <- NA
 
 # Reproject the data
-temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
-hd_bounds <- st_transform(hd_bounds, crs="EPSG:32632")
-station_coords_sf <- st_transform(station_coords_sf, crs="EPSG:32632")
+hd_bounds <- st_transform(hd_bounds, crs = st_crs(temp_clean_station_hm))
+station_coords_sf <- st_transform(station_coords_sf, crs = st_crs(temp_clean_station_hm))
 dem <- terra::project(dem, y = crs(temp_clean_station_hm))
 tch <- terra::project(tch, y = crs(temp_clean_station_hm))
 ghs_bh <- terra::project(ghs_bh, y = crs(temp_clean_station_hm))
 
+# Check if any CRS mismatches
 if (!identical(crs(tch), crs(dem))) {
-  stop("CRS mismatch: Canopy height and DEM do not have the same coordinate reference system.")
+  stop("CRS mismatch: Tree canopy height and DEM don't have the same CRS.")
 }
-
 if (!identical(crs(ghs_bh), crs(dem))) {
-  stop("CRS mismatch: Building height and DEM do not have the same coordinate reference system.")
+  stop("CRS mismatch: Building height and DEM don't have the same CRS.")
 }
-
 cat("All covariates share the same CRS.\n")
 
 # Convert to SpatialPointsDataFrame
 station_coords <- as(station_coords_sf, "Spatial")
 
 # Create a Raster Stack for all covariate information
-
-cat("Checking input raster resolutions (x by y):\n")
-cat(sprintf("DEM:    %s\n", paste(terra::res(dem), collapse = " x ")))
-cat(sprintf("TCH:    %s\n", paste(terra::res(tch), collapse = " x ")))
-cat(sprintf("GHS_BH: %s\n\n", paste(terra::res(ghs_bh), collapse = " x ")))
+cat("Checking input raster resolutions in metres:\n")
+cat(sprintf("DEM:    %.2f x %.2f\n", terra::res(dem)[1], terra::res(dem)[2]))
+cat(sprintf("TCH:    %.2f x %.2f\n", terra::res(tch)[1], terra::res(tch)[2]))
+cat(sprintf("GHS_BH: %.2f x %.2f\n\n", terra::res(ghs_bh)[1], terra::res(ghs_bh)[2]))
 
 # Align canopy height and building height to DEM resolution and extent
 tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
@@ -149,15 +196,16 @@ grids_ras <- stack(grids)
 
 # Convert to SpatialGridDataFrame
 grids_sp <- as(grids_ras, "SpatialGridDataFrame")
-
-grids_sp@grid@cellsize
 ```
+
+--------------------------------------------------------------------------------
 
 ```{r Adding covariates to temperature data}
 
-# Convert Spatial object to RasterBrick -> SpatRaster
-r_brick   <- brick(grids_sp)
-grid_terra <- rast(r_brick)
+# Convert prediction grid once
+r_brick    <- raster::brick(grids_sp)
+grid_terra <- terra::rast(r_brick)
+terra::crs(grid_terra) <- "EPSG:32632"
 
 # Extract raster values at point features
 ex <- terra::extract(grid_terra, temp_clean_station_hm)
@@ -271,50 +319,33 @@ vif_df
 
 # Plot VIF values
 p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
-  geom_col(color = "grey30", linewidth = 0.3) +
-  scale_fill_manual(
-    values = c(
-      "building_height" = "darkorange3",
-      "canopy_cooling"   = "darkolivegreen",
-      "elevation"       = "burlywood2"
-    ),
-    guide = "none"
-  ) +
-  scale_x_discrete(
-    labels = c(
-      "building_height" = "Building Height",
-      "canopy_cooling"   = "Gaussian-smoothed Canopy Height",
-      "elevation"       = "Elevation"
-    )
-  ) +
-  geom_hline(yintercept = 5,  linetype = "dashed", color = "black", linewidth = 0.8) +
-  annotate("text", x = 0.5, y = 5.2,
-         label = "VIF > 5 high multicollinearity",
-         hjust = 0, size = 4, color = "grey40") +
+  geom_col(color = "grey30", linewidth = 0.3, width = 0.5) +
+  geom_hline(yintercept = 5, linetype = "dashed", color = "grey60", linewidth = 0.5) +
+  scale_fill_manual(values = c("building_height" = "darkorange3", 
+                               "canopy_cooling"   = "darkolivegreen",
+                               "elevation"       = "burlywood2"),
+                    guide = "none") +
+  scale_x_discrete(labels = c("building_height" = "Building Height",
+                              "canopy_cooling"   = "Gaussian Canopy Height",
+                              "elevation"       = "Elevation")) +
+  geom_hline(yintercept = 5,  linetype = "dashed", 
+             color = "black", linewidth = 0.8) +
+  annotate("text", x = 0.5, y = 5.5, label = "VIF > 5 selected multicollinearity threshold",
+           hjust = 0, size = 4, color = "grey40") +
   geom_text(aes(label = round(VIF, 2)),
-          vjust = -0.5, size = 5) +
-  labs(
-    title = "Variance Inflation Factors (VIF) for Model Covariates",
-    caption = "Values assess multicollinearity among predictors",
-    x = "Covariate",
-    y = "VIF"
-  ) +
+          vjust = -0.5, size = 3.8) +
+  labs(x = "Covariate", y = "VIF") +
   theme_minimal(base_size = 14) +
   theme(
-    plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
-    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "grey40"),
-    plot.caption.position = "plot",
-    plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
-    axis.text.x = element_text(angle = 30, hjust = 1),
+    axis.text.x = element_text(angle = 30, hjust = 0.8),
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(color = "grey85")
-  )
+    panel.grid.major.y = element_line(color = "grey85"))
 
 p_vif
 
 # Save output to file
-#ggsave("../plots/multicollinearity.png", p_vif, width = 8, height = 5, dpi = 300)
+ggsave("../plots_report/gaussian_multicollinearity.png", p_vif, width = 8, height = 5, dpi = 300)
 ```
 
 ```{r Create output folder}
