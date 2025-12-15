@@ -1308,10 +1308,6 @@ rk_cv_metrics_long <- rk_cv_metrics %>%
     values_to = "value"
   ) %>%
   arrange(month_date)
-
-
-
-
 ```
 
 ```{r Plot LOOCV monthly mean}
@@ -1327,7 +1323,7 @@ p_cv <- ggplot(rk_cv_metrics_long,
     aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)")
   ) +
   scale_color_manual(
-    values = c("rk_cv_rmse" = "#6699CC", "rk_cv_mae" = "#CC6677"),
+    values = c("rk_cv_rmse" = "#0072B2", "rk_cv_mae" = "#D55E00"),
     labels = c("rk_cv_rmse" = "Root Mean Square Error (RMSE)",
                "rk_cv_mae"  = "Mean Absolute Error (MAE)")
   ) +
@@ -1347,7 +1343,7 @@ p_cv <- ggplot(rk_cv_metrics_long,
 p_cv
 
 # Save plot
-ggsave("../plots/cv_metrics_monthly_rmse_mae.png", plot = p_cv, width = 10, height = 6, dpi = 300)
+ggsave("../plots_report/loocv_metrics_monthly_rmse_mae.png", plot = p_cv, width = 10, height = 6, dpi = 300)
 ```
 
 
@@ -1377,7 +1373,7 @@ p_rk <- ggplot(rk_metrics_long,
     aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)")
   ) +
   scale_color_manual(
-    values = c("rk_rmse" = "#6699CC", "rk_mae" = "#CC6677"),
+    values = c("rk_rmse" = "#0072B2", "rk_mae" = "#D55E00"),
     labels = c("rk_rmse" = "Root Mean Square Error (RMSE)",
                "rk_mae"  = "Mean Absolute Error (MAE)")
   ) +
@@ -1413,7 +1409,7 @@ p_lm <- ggplot(lm_metrics_long,
     aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)")
   ) +
   scale_color_manual(
-    values = c("r_squared" = "#6699CC", "adj_r_squared" = "#CC6677"),
+    values = c("r_squared" = "#0072B2", "adj_r_squared" = "#D55E00"),
     labels = c("r_squared" = expression(R^2),
                "adj_r_squared" = expression(Adjusted~R^2))
   ) +
@@ -1434,5 +1430,5 @@ p_lm <- ggplot(lm_metrics_long,
 p_lm
 
 # Save plot
-ggsave("../plots/lm_metrics_monthly_r2.png", plot = p_lm, width = 10, height = 6, dpi = 300)
+ggsave("../plots_report/mlr_metrics_monthly_r2.png", plot = p_lm, width = 10, height = 6, dpi = 300)
 ```
