@@ -565,13 +565,13 @@ RK temperature prediction surface for hourly means
 ```{r Temporal variability analysis per pixel}
 
 # Load monthly mean RK surface
-mm_july_rk  <- terra::rast("../rk_monthly_mean/rk_predictions/2023_07_rk_prediction_map.tif")
+mm_july_rk  <- terra::rast("../Monthly_RK_2023/rk_predictions/2023-07-01_0000_rk_prediction.tif")
 
 # Directory with hourly RK predictions
-rk_dir <- "../rk_results_07-09-2023/rk_predictions"
+rk_dir <- "../RK_07_2023_12days/rk_predictions"
 
 # List all hourly RK raster files for July 2023
-rk_files <- list.files(rk_dir, pattern = "2023-07.*_rk_prediction_map\\.tif$", full.names = TRUE)
+rk_files <- list.files(rk_dir, pattern = "2023-07.*_rk_prediction\\.tif$", full.names = TRUE)
 
 # Stack all hourly rasters
 rk_stack <- rast(rk_files)
@@ -585,11 +585,6 @@ rk_sd_july <- app(rk_stack, fun = sd, na.rm = TRUE)
 # Coefficient of variation (relative variability)
 rk_cv_july <- rk_sd_july / rk_mean_july
 
-# Plot SD map
-plot(rk_sd_july, col = viridis(20),
-     main = "Hourly RK Temperature Variability (SD, July 2023)",
-     xlab = "", ylab = "")
-
 # Plot Coefficient of variation map
 plot(rk_cv_july, col = viridis(20),
      main = "Relative RK Temperature Variability (CV, July 2023)",
@@ -601,6 +596,39 @@ plot(c(mm_july_rk, rk_mean_july, rk_sd_july),
      main = c("Monthly Mean RK (from monthly model)",
               "Hourly Mean RK (average of all hours)",
               "Hourly Variability (SD across hours)"))
+```
+
+```{r Plot temporal variability of hourly RK predictions}
+
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+hd_bounds <- st_transform(hd_bounds, crs = "EPSG: 32632")
+
+rk_sd_july_clip <- terra::mask(rk_sd_july_clip, hd_bounds)
+
+# Convert raster to data frame
+rk_sd_df <- as.data.frame(rk_sd_july_clip, xy = TRUE, na.rm = TRUE)
+names(rk_sd_df)[3] <- "sd_temp"
+
+crs(rk_sd_df)
+
+# Plot Temporal variability of hourly RK predictions
+# Standard deviation of hourly air temperature (July 2023)
+ggplot(rk_sd_df, aes(x = x, y = y, fill = sd_temp)) +
+  geom_raster() +
+  coord_equal() +
+  scale_fill_viridis_c(
+    name = "Standard\nDeviation (°C)",
+    option = "viridis",
+    direction = 1
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
 ```
 
 
