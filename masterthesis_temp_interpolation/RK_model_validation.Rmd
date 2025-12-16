@@ -569,7 +569,7 @@ RK temperature prediction surface for hourly means
 mm_july_rk  <- terra::rast("../Monthly_RK_2023/rk_predictions/2023-07-01_0000_rk_prediction.tif")
 
 # Directory with hourly RK predictions
-rk_dir <- "../RK_07_2023_12days/rk_predictions"
+rk_dir <- "../RK_all_07_2023/rk_predictions"
 
 # List all hourly RK raster files for July 2023
 rk_files <- list.files(rk_dir, pattern = "2023-07.*_rk_prediction\\.tif$", full.names = TRUE)
@@ -586,23 +586,23 @@ rk_sd_july <- app(rk_stack, fun = sd, na.rm = TRUE)
 # Coefficient of variation (relative variability)
 rk_cv_july <- rk_sd_july / rk_mean_july
 
-# Plot Coefficient of variation map
-plot(rk_cv_july, col = viridis(20),
-     main = "Relative RK Temperature Variability (CV, July 2023)",
-     xlab = "", ylab = "")
-
-# Compare monthly mean, hourly mean, and hourly SD
-plot(c(mm_july_rk, rk_mean_july, rk_sd_july),
-     col = viridis(20),
-     main = c("Monthly Mean RK (from monthly model)",
-              "Hourly Mean RK (average of all hours)",
-              "Hourly Variability (SD across hours)"))
+# # Plot Coefficient of variation map
+# plot(rk_cv_july, col = viridis(20),
+#      main = "Relative RK Temperature Variability (CV, July 2023)",
+#      xlab = "", ylab = "")
+# 
+# # Compare monthly mean, hourly mean, and hourly SD
+# plot(c(mm_july_rk, rk_mean_july, rk_sd_july),
+#      col = viridis(20),
+#      main = c("Monthly Mean RK (from monthly model)",
+#               "Hourly Mean RK (average of all hours)",
+#               "Hourly Variability (SD across hours)"))
 ```
 
 ```{r Plot temporal variability of hourly RK predictions}
 
-
-rk_sd_july_clip <- terra::mask(rk_sd_july_clip, hd_bounds)
+# Clip data before plotting
+rk_sd_july_clip <- terra::mask(rk_sd_july, hd_bounds)
 
 # Convert raster to data frame
 rk_sd_df <- as.data.frame(rk_sd_july_clip, xy = TRUE, na.rm = TRUE)
@@ -635,6 +635,41 @@ temp_var
 ggsave("../plots_report/temporal_sd_hourly_rk_predictions.png", temp_var, width = 10, height = 5, dpi = 300)
 ```
 
+```{r Plot relative variability of hourly RK predictions}
+
+# Clip data before plotting
+rk_cv_july_clip <- terra::mask(rk_cv_july, hd_bounds)
+
+# Convert raster to data frame
+rk_cv_df <- as.data.frame(rk_cv_july_clip, xy = TRUE, na.rm = TRUE)
+names(rk_cv_df)[3] <- "coeff_var"
+
+# Plot relative variability of hourly RK predictions
+# Coefficient of Variation of hourly air temperature (July 2023)
+temp_coeff_var <- ggplot(rk_cv_df, aes(x = x, y = y, fill = coeff_var)) +
+  geom_raster() +
+  coord_equal() +
+  scale_fill_viridis_c(
+    name = "Coefficient of\nVariation",
+    option = "viridis",
+    direction = 1
+  ) +
+  annotation_scale(location = "br", width_hint = 0.3) +    
+  annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+temp_coeff_var
+
+# Save as PNG
+ggsave("../plots_report/temporal_cv_hourly_rk_predictions.png", temp_var, width = 10, height = 5, dpi = 300)
+```
 
 ```{r Residual variability relative to the monthly mean RK}
 
@@ -644,18 +679,37 @@ res_stack <- rk_stack - mm_july_rk
 # Pixel-wise SD of residuals (temporal variability)
 res_var <- app(res_stack, fun = sd, na.rm = TRUE)
 
+# Clip data before plotting
+res_var <- terra::mask(res_var, hd_bounds)
+
 # Convert to data frame for plotting
 res_df <- as.data.frame(res_var, xy = TRUE, na.rm = TRUE)
 names(res_df)[3] <- "residual_sd"
 
 # Plot spatial SD map
-ggplot(res_df, aes(x, y, fill = residual_sd)) +
+resid_var <- ggplot(res_df, aes(x = x, y = y, fill = residual_sd)) +
   geom_raster() +
-  scale_fill_viridis_c(name = "SD (°C)") +
   coord_equal() +
-  theme_minimal() +
-  labs(title = "Residual Variability (Hourly RK vs Monthly Mean RK, July 2023)")
+  scale_fill_viridis_c(
+    name = "Residual SD (°C)",
+    option = "viridis",
+    direction = 1
+  ) +
+  annotation_scale(location = "br", width_hint = 0.3) +    
+  annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
 
+resid_var
+```
+
+```{r}
 # Extract mean SD per landcover polygon
 res_var_by_lc <- terra::extract(res_var, landuse, fun = mean, na.rm = TRUE)
 
@@ -688,3 +742,4 @@ ggplot(res_var_summary, aes(x = reorder(class_2018, mean_sd), y = mean_sd, fill 
     legend.position = "right"
   )
 ```
+
