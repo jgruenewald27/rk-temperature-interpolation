@@ -435,7 +435,7 @@ corr_by_class <- comparison_df |>
 
 ```{r Color Palette for CORINE Landcover}
 
-# Define color palette for land cover classes based on CORINE
+# Define color palette for land cover classes based on OSM LULC
 landcover_colors <- c(
   "Water bodies" = "#2daae1",
 
@@ -455,6 +455,7 @@ landcover_colors <- c(
   "Wetlands" = "#b2b2ff"
 )
 
+# Combination class number and name
 lu_lookup <- c(
   "5"  = "Water bodies",
 
@@ -473,7 +474,6 @@ lu_lookup <- c(
 
   "41" = "Wetlands"
 )
-
 ```
 
 ```{r Correlation by land cover class}
@@ -717,29 +717,50 @@ res_var_by_lc <- terra::extract(res_var, landuse, fun = mean, na.rm = TRUE)
 names(res_var_by_lc)[2] <- "mean_sd"
 
 # Add landcover class names
-res_var_by_lc$class_2018 <- landuse$class_2018
+res_var_by_lc$hd_osm_landuse_4326 <- landuse$hd_osm_landuse_4326
 
 # Aggregate by class
 res_var_summary <- res_var_by_lc %>%
-  group_by(class_2018) %>%
+  group_by(hd_osm_landuse_4326) %>%
   summarise(mean_sd = mean(mean_sd, na.rm = TRUE)) %>%
   arrange(desc(mean_sd))
 
+res_var_summary <- res_var_summary %>%
+  dplyr::mutate(
+    hd_osm_landuse_4326 = factor(hd_osm_landuse_4326)
+  )
+
 # Plot mean SD by landcover class
-ggplot(res_var_summary, aes(x = reorder(class_2018, mean_sd), y = mean_sd, fill = mean_sd)) +
-  geom_col() +
+ggplot(
+  res_var_summary,
+  aes(
+    x = reorder(hd_osm_landuse_4326, mean_sd),
+    y = mean_sd,
+    fill = hd_osm_landuse_4326
+  )
+) +
+  geom_col(width = 0.6, color = "grey30") +
+  geom_text(
+    aes(label = sprintf("%.2f", mean_sd)),
+    hjust = -0.1, size = 3
+  ) +
+  scale_fill_manual(values = landcover_colors) +
   coord_flip() +
-  scale_fill_viridis_c(name = "SD (°C)") +
   labs(
     title = "Residual Variability by Landcover Class",
     subtitle = "Standard deviation of hourly RK deviations from monthly RK mean (July 2023)",
-    x = "Landcover Class (class_2018)",
+    x = NULL,
     y = "Mean SD (°C)"
   ) +
-  theme_minimal(base_size = 13) +
+  theme_bw(base_size = 13) +
   theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "none",
     axis.text.y = element_text(size = 9),
-    legend.position = "right"
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
   )
+
 ```
 
