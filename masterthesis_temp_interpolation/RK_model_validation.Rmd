@@ -727,18 +727,19 @@ res_var_summary <- res_var_by_lc %>%
 
 res_var_summary <- res_var_summary %>%
   dplyr::mutate(
-    hd_osm_landuse_4326 = factor(hd_osm_landuse_4326)
+    lu_label = lu_lookup[as.character(hd_osm_landuse_4326)]
   )
 
-# Plot mean SD by landcover class
+res_var_summary <- res_var_summary %>%
+  dplyr::mutate(
+    lu_label = lu_lookup[as.character(hd_osm_landuse_4326)]
+  )
+
+# Plot Residual Variability by Landcover Class",
+# Standard deviation of hourly RK from monthly RK mean residuals (July 2023)
 ggplot(
   res_var_summary,
-  aes(
-    x = reorder(hd_osm_landuse_4326, mean_sd),
-    y = mean_sd,
-    fill = hd_osm_landuse_4326
-  )
-) +
+  aes(x = reorder(lu_label, mean_sd), y = mean_sd, fill = lu_label)) +
   geom_col(width = 0.6, color = "grey30") +
   geom_text(
     aes(label = sprintf("%.2f", mean_sd)),
@@ -747,8 +748,6 @@ ggplot(
   scale_fill_manual(values = landcover_colors) +
   coord_flip() +
   labs(
-    title = "Residual Variability by Landcover Class",
-    subtitle = "Standard deviation of hourly RK deviations from monthly RK mean (July 2023)",
     x = NULL,
     y = "Mean SD (°C)"
   ) +
@@ -761,6 +760,5 @@ ggplot(
     panel.grid.minor = element_blank(),
     panel.grid.major.y = element_blank()
   )
-
 ```
 
