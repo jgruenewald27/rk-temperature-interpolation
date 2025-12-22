@@ -48,7 +48,9 @@ library(tmap)
 
 --------------------------------------------------------------------------------
 
-```{r Code for consistently pre-processing the temperature data for the entire year of 2023}
+```{r Load temp data}
+
+# Complete data import and pre-processing of the temperature (July 2023)
 
 # Read temperature data for the entire year of 2023
 temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
@@ -56,30 +58,74 @@ temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
 # Removes rows where temp is NA
 temp <- temp %>% filter(!is.na(temperature))
 
+# sf-compatible CRS
+CRS_UTM32 <- sf::st_crs(32632)
+
+# sp-compatible CRS
+CRS_UTM32_sp <- sp::CRS("+proj=utm +zone=32 +datum=WGS84 +units=m +no_defs")
+
 # Reproject the data for Germany
-temp <- st_transform(temp, crs="EPSG:32632")
+temp <- st_transform(temp, crs=CRS_UTM32)
 
 # Clean the data from outliers -> currently working with hard, manual breaks
 # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
-temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+temp_clean <- temp %>% filter(temperature >= -30, temperature <= 45)
 
-# Calculate hour count since epoch, rounded down to current hour
-temp_clean$chour <- floor(as.numeric(temp_clean$dateobserved) / 3600)
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
 
-# MAYBE CALCULATE THIS LATER AND SAFE THE OUTPUT THAT I HAVE A DATASET WITH
-# HOURLY MEANS FOR THE ENTIRE YEAR OF 2023
-# Calculate mean temperature for each station and hour during July using local hour
-# temp_hm <- temp_clean %>%
-#   group_by(stationname, dateobserved, chour) %>%
-#   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
+# Check if exactly 5 stations were dropped
+cat("Number of stations BEFORE cleaning: ",
+    length(unique(na.omit(temp_clean$entity_id))), "\n")
 
-# # Calculate mean temperature for each station and hour during any given month
-# temp_hm <- temp %>%
-#   filter(format(dateobserved, "%m") == "07") %>%  # Keep only July data
-#   group_by(stationname, chour) %>%                # Group by station and hour
-#   summarise(mh_temp = mean(temperature, na.rm = TRUE), .groups = "drop") %>%
-#   mutate(hour = as.POSIXct(chour * 3600, origin = "1970-01-01", tz = "Europe/Berlin"))
+cat("Number of stations AFTER cleaning:  ",
+    length(unique(na.omit(temp_clean_station$entity_id))), "\n")
+
+# Calculate hourly mean temp for cleaned data
+temp_clean_station_hm <- temp_clean_station %>%
+    mutate(hour = floor_date(dateobserved, unit = "hour")) %>%   # round down
+    group_by(entity_id, hour) %>%
+    summarise(hm_temp = mean(temperature, na.rm = TRUE), .groups = "drop")
 ```
+
+```{r}
+
+# Set time range
+start_date <- as.POSIXct("2023-07-01 00:00:00", tz = "Europe/Berlin")
+end_date   <- as.POSIXct("2023-07-12 23:00:00", tz = "Europe/Berlin")
+
+# Filter temp data to first 12 days of July
+temp_july_12 <- temp_clean_station_hm %>%
+  filter(between(hour, start_date, end_date))
+
+# Plot 12 day temperature
+temp_time_series <- ggplot(temp_july_12, aes(x = hour, y = hm_temp)) +
+  geom_line(alpha = 0.6) +
+  labs(x = "Day", y = "Temperature [°C]") +
+  scale_x_datetime(date_breaks = "1 day", date_labels = "%b %d") +
+  scale_y_continuous(limits = c(10, 40), breaks = seq(10, 40, by = 5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(
+    axis.title.x = element_text(margin = ggplot2::margin(t = 25)),
+    axis.title.y = element_text(margin = ggplot2::margin(r = 25))
+  ) +
+  theme_minimal()
+
+temp_time_series
+
+# Save plot
+ggsave("../plots_report/temp_time_series_12days.png",
+       plot = temp_time_series, width = 12, height = 8, dpi = 300)
+```
+
 
 --------------------------------------------------------------------------------
 
@@ -142,6 +188,9 @@ p_temp
 #   filename = file.path("../plots", paste0("temperature_distribution_all_stations_2023", ".png")),
 #   plot = p_temp, width = 10, height = 6, units = "in", dpi = 300
 # )
+
+str(temp)
+length(unique(temp$entity_id))
 ```
 
 --------------------------------------------------------------------------------
@@ -722,3 +771,8 @@ all_data <- gpkg_files %>%
 # Write to a single layer in a new GeoPackage
 st_write(all_data, "../data/combined_temp_data.gpkg", layer = "all_temp_data", driver = "GPKG")
 ```
+
+```{r}
+length(unique(all_data$entity_id))
+```
+
