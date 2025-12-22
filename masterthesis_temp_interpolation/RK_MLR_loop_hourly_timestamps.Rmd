@@ -72,7 +72,7 @@ temp <- st_transform(temp, crs=CRS_UTM32)
 
 # Clean the data from outliers -> currently working with hard, manual breaks
 # Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
-temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+temp_clean <- temp %>% filter(temperature >= -30, temperature <= 45)
 
 # Drop all measurement stations which didn't collect data the entire year around
 temp_clean_station <- temp_clean %>%
