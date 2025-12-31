@@ -123,46 +123,81 @@ ggsave("../plots_report/MLR_RK_metrics_12days.png",
 
 ```{r Analyse LOOCV metrics 12 days}
 
-# Daily Evaluation of the LOOCV RK Metrics
-p_loocv <- ggplot(rk_cv_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
-    geom_line(linewidth = 1.2) +
-    geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
-    geom_point(size = 1.5, alpha = 0.7) +
-    ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +  
-    scale_color_manual(
-      values = c(
-        "rk_cv_rmse" = "#0072B2",
-        "rk_cv_mae"  = "#D55E00"
-      ),
-      labels = c(
-        "rk_cv_rmse" = "Root Mean Square Error (RMSE)",
-        "rk_cv_mae"  = "Mean Absolute Error (MAE)"
-      )
-    ) +
-    scale_linetype_manual(
-      name = "",
-      values = c("Perfect Prediction (Error = 0)" = "dotted")
-    ) +
-    labs(x = "Hour of the Day", y = "Error Metric [°C]", color    = "Metrics") +
-    scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
-    theme_minimal(base_size = 14) +
-    theme(
-      legend.position  = "top",
-      legend.box       = "horizontal",
-      panel.grid.minor = element_blank(),
-      panel.spacing    = unit(0.8, "lines"),
-      strip.background = element_rect(fill = "grey90", color = NA),
-      strip.text       = element_text(face = "bold"),
-      plot.title = element_text(hjust = 0.5),
-      plot.subtitle = element_text(hjust = 0.5)
-    )
+# Prepare hourly background temperature data
+weather_bg <- weather_hourly_means %>%
+  mutate(
+      timestamp = as.POSIXct(hour, 
+                             format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+      date = as.Date(hour, tz = "Europe/Berlin"),
+      hour = lubridate::hour(hour)
+  ) %>%
+  select(date, hour, temperature_mean)
 
+# Ensure date format matches for faceting 
+rk_cv_metrics_long <- rk_cv_metrics_long %>%
+  mutate(date = as.Date(date))
+
+# Define ranges for linear transformation between temperature and error scales
+rng_err  <- range(rk_cv_metrics_long$value, na.rm = TRUE)
+rng_temp <- range(weather_bg$temperature_mean, na.rm = TRUE)
+
+# Functions to map temperature to error scale and back
+temp_to_err <- function(t) {
+  (t - rng_temp[1]) / diff(rng_temp) * diff(rng_err) + rng_err[1]
+}
+err_to_temp <- function(e) {
+  (e - rng_err[1]) / diff(rng_err) * diff(rng_temp) + rng_temp[1]
+}
+
+# Apply transformation so temperature can be plotted on the error axis
+weather_bg <- weather_bg %>%
+  mutate(temp_err = temp_to_err(temperature_mean))
+
+# Plot LOOCV error metrics with transformed temperature as background histogram
+p_loocv <- ggplot(rk_cv_metrics_long, 
+                  aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_col(data = weather_bg, 
+           aes(x = hour, y = temp_err, fill = temperature_mean), 
+           inherit.aes = FALSE, width = 0.95, alpha = 0.55) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
+  geom_point(size = 1.5, alpha = 0.7) +
+  ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +
+  scale_color_manual(
+    values = c("rk_cv_rmse" = "#0072B2", "rk_cv_mae"  = "#D55E00"),
+    labels = c("rk_cv_rmse" = "Root Mean Square Error (RMSE)",
+               "rk_cv_mae"  = "Mean Absolute Error (MAE)")
+  ) +
+  scale_fill_gradientn(
+    name   = "Temperature [°C]",
+    colours = c("#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c"),
+    limits  = rng_temp
+  ) +
+  scale_linetype_manual(name = "", 
+                        values = c("Perfect Prediction (Error = 0)" = "dotted")
+  ) +
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24), limits = c(0, 24)) +
+  scale_y_continuous(name = "Error Metric [°C]",
+                     sec.axis = sec_axis(~ err_to_temp(.), name = "Temperature Mean [°C]")) +
+  labs(x = "Hour of the Day", color = "Metrics") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "top",
+    legend.box       = "horizontal",
+    panel.grid.minor = element_blank(),
+    panel.spacing    = unit(0.8, "lines"),
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text       = element_text(face = "bold")
+  )
+
+# Display plot
 p_loocv
 
 # Save plot
-ggsave("../plots_report/LOOCV_RK_metrics_12days.png",
+ggsave("../plots_report/LOOCV_RK_metrics_12days_temp.png",
        plot = p_loocv, width = 12, height = 8, dpi = 300)
 ```
+
 
 ```{r Analyse RK metrics 12 days}
 
