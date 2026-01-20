@@ -53,7 +53,7 @@ library(tmap)
 # Complete data import and pre-processing of the temperature (July 2023)
 
 # Read temperature data for the entire year of 2023
-temp <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
+temp <- sf::read_sf('../data/temp_HD/others/sensor_data_year_2023.geojson')
 
 # Removes rows where temp is NA
 temp <- temp %>% filter(!is.na(temperature))
@@ -170,27 +170,22 @@ p_temp <- ggplot(daily, aes(x = date)) +
   ) +
   # make the legend lines match the thickness of the plotted lines
   guides(color = guide_legend(override.aes = list(linewidth = c(0.8, 0.8), alpha = 1))) +
-  labs(
-    title = "2023 Temperature by Station — ordered by sensor ID",
-    x = NULL, y = "Temperature (°C)",
-    caption = "Source: Pre-processed sensor data"
-  ) +
+  labs(x = "Month", y = "Temperature [°C]") +
   theme_minimal(base_size = 10) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1),
         strip.text = element_text(face = "bold"),
-        plot.title = element_text(size = 16, face = "bold"))
+        axis.title.x = element_text(margin = margin(t = 15)),
+        axis.title.y = element_text(margin = margin(r = 15)),
+        legend.position = "none")
 
 p_temp
 
 # Save the figure
-# ggsave(
-#   filename = file.path("../plots", paste0("temperature_distribution_all_stations_2023", ".png")),
-#   plot = p_temp, width = 10, height = 6, units = "in", dpi = 300
-# )
-
-str(temp)
-length(unique(temp$entity_id))
+ggsave(
+  filename = file.path("../plots", paste0("temperature_distribution_all_stations_2023", ".png")),
+  plot = p_temp, width = 15, height = 10, units = "in", dpi = 300
+)
 ```
 
 --------------------------------------------------------------------------------
@@ -207,7 +202,7 @@ p_outlier <- station_data %>%
   filter(!is.na(dateobserved), !is.na(temperature)) %>%
   mutate(month = floor_date(dateobserved, "month")) %>%
   ggplot(aes(x = factor(month), y = temperature)) +
-  geom_violin(fill = "#FFA500", color = "black", trim = FALSE,
+  geom_violin(fill = "#FCE9B4", color = "black", trim = FALSE,
               draw_quantiles = c(0.25, 0.5, 0.75)) +  # show Q1 / median / Q3
   stat_summary(
     fun.data = function(y) {
@@ -219,17 +214,17 @@ p_outlier <- station_data %>%
                  label = sprintf("Count = %d\nMean = %.2f\nSD = %.2f", n, m, s))
     },
     geom = "text", hjust = 0.5, vjust = -0.8,
-    aes(label = after_stat(label)), size = 2.6
+    aes(label = after_stat(label)), size = 3.2
   ) +
-  labs(title = "Monthly temperature distribution for station\nhd:DE_Heidelberg_69120_34:WeatherObserved (Inactive since May 8, 2023)",
-       x = "Month", y = "Temperature (°C)",
-       caption = "Source: Pre-processed sensor data") +
+  labs(x = "Month", y = "Temperature [°C]") +
   scale_x_discrete(labels = function(x) format(as.Date(x), "%b %Y")) +
   scale_y_continuous(expand = expansion(mult = c(0.03, 0.18))) +
   theme_minimal(base_size = 12) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.title = element_text(face = "bold"))
+        axis.title.x = element_text(margin = margin(t = 15)),
+        axis.title.y = element_text(margin = margin(r = 15))
+        )
 
 p_outlier
 
@@ -773,6 +768,17 @@ st_write(all_data, "../data/combined_temp_data.gpkg", layer = "all_temp_data", d
 ```
 
 ```{r}
-length(unique(all_data$entity_id))
+all_data %>%
+  arrange(entity_id, dateobserved) %>%
+  group_by(entity_id) %>%
+  mutate(dt_mins = as.numeric(difftime(dateobserved, lag(dateobserved), units = "mins"))) %>%
+  count(entity_id, dt_mins, sort = TRUE)
+
+hd_data <- all_data %>%
+  filter(entity_id == "hd:DE_Heidelberg_69120_34:WeatherObserved") %>%
+  arrange(stationname)
+
+hd_data
+
 ```
 
