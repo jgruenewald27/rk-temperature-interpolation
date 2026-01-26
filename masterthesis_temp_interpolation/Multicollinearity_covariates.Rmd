@@ -94,7 +94,7 @@ temp_clean_station_hm <- temp_clean_station %>%
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
 #Shortcut -> import pre-processed hourly means
-temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+temp_clean_station_hm <- sf::read_sf('../data/temp_HD/others/temp_clean_station_hm.gpkg')
 
 # Reproject pre-processed temp data
 temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
@@ -107,12 +107,12 @@ temp_clean_station_hm <- temp_clean_station_hm %>%
 
 # Import AOI and station coords
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
-station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+station_coords_sf <- sf::read_sf('../data/temp_HD/others/station_coords.gpkg')
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
-ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_ANBH_4326.tif")
 
 # Mask out all values which are assigned to water and have value 101
 # Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
@@ -381,8 +381,8 @@ p_corr_temp_cov <- ggplot(station_long, aes(x = value, y = mean_temp)) +
     strip.text = element_text(face = "bold", size = 14),
     plot.title = element_text(face = "bold", size = 20, hjust = 0.5,
                               margin = margin(t = 10, b = 10)),
-    axis.title.y = element_text(size = 14),
-    axis.text = element_text(size = 12)
+    axis.text = element_text(size = 12),
+    axis.title.y = element_text(margin = margin(r = 15))
   )
 
 p_corr_temp_cov
@@ -426,12 +426,15 @@ p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
   geom_text(aes(label = round(VIF, 2)),
           vjust = -0.5, size = 3.8) +
   labs(x = "Covariate", y = "VIF") +
-  theme_minimal(base_size = 14) +
+  theme_minimal(base_size = 11) +
   theme(
     axis.text.x = element_text(angle = 30, hjust = 0.8),
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(color = "grey85"))
+    panel.grid.major.y = element_line(color = "grey85"),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
+  )
 
 p_vif
 
