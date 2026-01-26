@@ -124,11 +124,8 @@ day_lines <- seq(
 )
 
 temp_time_series <- ggplot(temp_hourly_sum, aes(x = hour)) +
-  geom_vline(
-    xintercept = day_lines,
-    colour = "grey80",
-    linewidth = 0.4
-  ) +
+  geom_vline(xintercept = day_lines, colour = "grey80", linewidth = 0.4,
+             alpha = 0.25) +
   geom_ribbon(aes(ymin = q10, ymax = q90), alpha = 0.25) +
   geom_line(aes(y = median_temp), linewidth = 0.9) +
   labs(x = "Day", y = "Temperature [°C]") +
@@ -139,6 +136,8 @@ temp_time_series <- ggplot(temp_hourly_sum, aes(x = hour)) +
     axis.text.x  = element_text(angle = 45, hjust = 1),
     axis.title.x = element_text(margin = margin(t = 15)),
     axis.title.y = element_text(margin = margin(r = 15)),
+    panel.grid.major.y = element_line(colour = alpha("grey80", 0.25),
+                                      linewidth = 0.4),
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank()
   )
