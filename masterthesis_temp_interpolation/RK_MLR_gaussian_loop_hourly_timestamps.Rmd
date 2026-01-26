@@ -96,7 +96,7 @@ temp_clean_station_hm <- temp_clean_station %>%
 # Import of pre-processed temp data and import and pre-processing of covariates 
 
 #Shortcut -> import pre-processed hourly means
-temp_clean_station_hm <- sf::read_sf('../data/temp_HD/temp_clean_station_hm.gpkg')
+temp_clean_station_hm <- sf::read_sf('../data/temp_HD/others/temp_clean_station_hm.gpkg')
 
 # Reproject pre-processed temp data
 temp_clean_station_hm <- st_transform(temp_clean_station_hm, crs="EPSG:32632")
@@ -109,12 +109,12 @@ temp_clean_station_hm <- temp_clean_station_hm %>%
 
 # Import AOI and station coords
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
-station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+station_coords_sf <- sf::read_sf('../data/temp_HD/others/station_coords.gpkg')
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
-ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_ANBH_4326.tif")
 
 # Mask out all values which are assigned to water and have value 101
 # Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
@@ -303,50 +303,88 @@ p_corr_temp_cov
 ```
 
 ```{r Check for multicollineraity}
+# Model 1: raw canopy height
+mlr_vif_raw <- lm(hm_temp ~ elevation + canopy_height + building_height,
+                  data = temp_clean_station_hm_cov)
 
-# define multiple linear regression model
-mlr_coll <- lm(hm_temp ~ elevation + canopy_cooling + building_height, data = temp_clean_station_hm_cov)
+# Model 2: gaussian-filtered canopy height
+mlr_vif_gauss <- lm(hm_temp ~ elevation + canopy_cooling + building_height,
+                    data = temp_clean_station_hm_cov)
 
-mlr_coll
+# Helper: extract VIF into tidy format
+get_vif_df <- function(model, model_label) {
+  car::vif(model) %>%
+    as.data.frame() %>%
+    rownames_to_column("covariate") %>%
+    rename(VIF = 2) %>%
+    mutate(model = model_label)
+}
 
-vif_df <- car::vif(mlr_coll) %>%
-  as.data.frame() %>%
-  tibble::rownames_to_column("covariate") %>%
-  rename(VIF = 2)
+vif_df <- bind_rows(
+  get_vif_df(mlr_vif_raw,   "No filter"),
+  get_vif_df(mlr_vif_gauss, "Gaussian filter")
+) %>%
+  mutate(
+    covariate = dplyr::case_when(
+      covariate %in% c("canopy_height", "canopy_cooling") ~ "canopy",
+      TRUE ~ covariate
+    ),
+    covariate = factor(
+      covariate,
+      levels = c("elevation", "canopy", "building_height"),
+      labels = c("Elevation", "Canopy height", "Building height")
+    ),
+    model = factor(model, levels = c("No filter", "Gaussian filter"))
+  )
 
-# to check VIF table
-vif_df   
-
-# Plot VIF values
-p_vif <- ggplot(vif_df, aes(x = covariate, y = VIF, fill = covariate)) +
-  geom_col(color = "grey30", linewidth = 0.3, width = 0.5) +
-  geom_hline(yintercept = 5, linetype = "dashed", color = "grey60", linewidth = 0.5) +
-  scale_fill_manual(values = c("building_height" = "darkorange3", 
-                               "canopy_cooling"   = "darkolivegreen",
-                               "elevation"       = "burlywood2"),
-                    guide = "none") +
-  scale_x_discrete(labels = c("building_height" = "Building Height",
-                              "canopy_cooling"   = "Gaussian Canopy Height",
-                              "elevation"       = "Elevation")) +
-  geom_hline(yintercept = 5,  linetype = "dashed", 
+p_vif_comp <- ggplot(vif_df, aes(x = covariate, y = VIF,
+                                 fill = covariate, alpha = model)) +
+  geom_col(
+    position = position_dodge(width = 0.75),
+    width = 0.65,
+    color = "grey30",
+    linewidth = 0.3
+  ) +
+  geom_hline(yintercept = 5, linetype = "dashed",
              color = "black", linewidth = 0.8) +
-  annotate("text", x = 0.5, y = 5.5, label = "VIF > 5 selected multicollinearity threshold",
+  annotate("text", x = 0.5, y = 5.5,
+           label = "left: No filter; right: Gaussian filter\nVIF > 5 selected multicollinearity threshold",
            hjust = 0, size = 4, color = "grey40") +
-  geom_text(aes(label = round(VIF, 2)),
-          vjust = -0.5, size = 3.8) +
+  geom_text(
+    aes(label = sprintf("%.2f", VIF)),
+    position = position_dodge(width = 0.75),
+    vjust = -0.5,
+    size = 4
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Building height" = "darkorange3",
+      "Canopy height"   = "darkolivegreen",
+      "Elevation"       = "burlywood2"
+    ),
+    guide = "none"
+  ) +
+  scale_alpha_manual(
+    values = c("No filter" = 1.0, "Gaussian filter" = 0.75)
+  ) +
+  guides(alpha = "none") +
   labs(x = "Covariate", y = "VIF") +
-  theme_minimal(base_size = 14) +
+  theme_minimal(base_size = 11) +
   theme(
     axis.text.x = element_text(angle = 30, hjust = 0.8),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15)),
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(color = "grey85"))
+    panel.grid.major.y = element_line(color = "grey85")
+  )
 
-p_vif
+p_vif_comp
 
 # Save output to file
-ggsave("../plots_report/gaussian_multicollinearity.png", p_vif, width = 8, height = 5, dpi = 300)
+ggsave("../plots_report/multicollinearity.png", p_vif_comp, width = 8, height = 5, dpi = 300)
 ```
+
 
 ```{r Create output folder}
 
