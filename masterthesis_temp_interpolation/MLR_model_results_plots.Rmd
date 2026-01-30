@@ -42,7 +42,7 @@ Plot the outputs
 ```{r Analyse MLR metrics}
 
 # Read CSV with MLR metrics
-lm_metrics <- read.csv("../MLR_07_2023_12days/lm_metrics/lm_model_performance_summary.csv")
+lm_metrics <- read.csv("../MLR_ANBH_07_2023_12days/lm_metrics/lm_model_performance_summary.csv")
 
 lm_metrics <- lm_metrics %>%
     mutate(
@@ -71,8 +71,8 @@ The following plot aims to address these research questions:
 
 ```{r}
 # Read and prepare data
-coef_all <- read.csv("../MLR_07_2023_12days/lm_metrics_z/lm_z_coefficients_by_timestamp.csv")
-fit <- read.csv("../MLR_07_2023_12days/lm_metrics_z/lm_z_model_performance_summary.csv")
+coef_all <- read.csv("../MLR_ANBH_07_2023_12days/lm_metrics_z/lm_z_coefficients_by_timestamp.csv")
+fit <- read.csv("../MLR_ANBH_07_2023_12days/lm_metrics_z/lm_z_model_performance_summary.csv")
 
 fit <- fit %>%
   mutate(
@@ -153,12 +153,15 @@ p_cov <- ggplot(coef_all, aes(x = hour)) +
     plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
     panel.grid.major.x = element_line(color = "grey90"),  
     panel.grid.major.y = element_line(color = "grey90"), 
-    panel.grid.minor = element_blank()                   
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y.left  = element_text(margin = margin(r = 15)),
+    axis.title.y.right = element_text(margin = margin(l = 15))
   )
 
 # Save each page
-# ggsave(filename = file.path("../plots_report/covariate_importance.png"),
-#        plot = p_cov, width = 12, height = 10, dpi = 300)
+ggsave(filename = file.path("../plots_report/covariate_importance.png"),
+       plot = p_cov, width = 12, height = 10, dpi = 300)
 
 p_cov
 ```
@@ -178,11 +181,11 @@ Spatial Autocorrelation of MLR model residuals
 ```{r Investigate k selection for Morans I calculation}
 
 # Import residuals from hourly MLR models
-mlr_residuals <- read.csv("../MLR_07_2023_12days/mlr_residuals_all.csv",
+mlr_residuals <- read.csv("../MLR_ANBH_07_2023_12days/mlr_residuals_all.csv",
   stringsAsFactors = FALSE)
 
 # Load station coords
-station_coords_sf <- sf::read_sf("../data/temp_HD/station_coords.gpkg")
+station_coords_sf <- sf::read_sf("../data/temp_HD/others/station_coords.gpkg")
 
 # Extract UTM coords for each station
 station_coords_df <- station_coords_sf %>%
@@ -434,6 +437,8 @@ p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_category)) +
     panel.grid.major.x = element_line(color = "grey90"),
     panel.grid.major.y = element_line(color = "grey90"),
     panel.grid.minor = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
   ) +
   guides(
     fill = guide_legend(order = 1),
