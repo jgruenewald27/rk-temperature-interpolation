@@ -107,12 +107,12 @@ temp_clean_station_hm <- temp_clean_station %>%
 
 # Import AOI and station coords
 hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
-station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+station_coords_sf <- sf::read_sf('../data/temp_HD/others/station_coords.gpkg')
 
 # Import the covariates
 dem <- terra::rast("../data/DEM/hd_elevation_4326.tif")
 tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
-ghs_bh <- terra::rast("../data/building_height/hd_building_height_4326.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_ANBH_4326.tif")
 
 # Mask out all values which are assigned to water and have value 101
 # Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
@@ -252,7 +252,7 @@ if (!all_same) {
 ```{r Create output folder}
 
 # Create output dirs
-output_dir <- "../RK_07_2023_12days"
+output_dir <- "../RK_ANBH_07_2023_12days"
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 variogram_dir <- file.path(output_dir, "variogram_fits")
