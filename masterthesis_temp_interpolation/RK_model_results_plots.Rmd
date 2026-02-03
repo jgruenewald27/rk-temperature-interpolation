@@ -31,13 +31,13 @@ Plots to analyse model performance metrics for 12 days
 ```{r Read performance metrics}
 
 # Read MLR metrics
-lm_metrics <- read.csv("../RK_07_2023_12days/mlr_model_performance_summary.csv",
+lm_metrics <- read.csv("../RK_ANBH_07_2023_12days/mlr_model_performance_summary.csv",
                        stringsAsFactors = FALSE)
 # Read LOOCV metrics
-rk_cv_metrics <- read.csv("../RK_07_2023_12days/rk_loocv_metrics.csv",
+rk_cv_metrics <- read.csv("../RK_ANBH_07_2023_12days/rk_loocv_metrics.csv",
                        stringsAsFactors = FALSE)
 # Read RK metrics
-rk_metrics <- read.csv("../RK_07_2023_12days/rk_metrics.csv",
+rk_metrics <- read.csv("../RK_ANBH_07_2023_12days/rk_metrics.csv",
                        stringsAsFactors = FALSE)
 
 # Clean and standardize timestamp, date, and hour columns
@@ -117,8 +117,8 @@ p_lm <- ggplot(lm_metrics_long, aes(x = hour, y = value, color = metric, group =
 p_lm
 
 # Save plot
-ggsave("../plots_report/MLR_RK_metrics_12days.png",
-       plot = p_lm, width = 12, height = 8, dpi = 300)
+# ggsave("../plots_report/MLR_RK_metrics_12days.png",
+#        plot = p_lm, width = 12, height = 8, dpi = 300)
 ```
 
 ```{r Analyse LOOCV metrics 12 days}
@@ -131,7 +131,7 @@ weather_bg <- weather_hourly_means %>%
       date = as.Date(hour, tz = "Europe/Berlin"),
       hour = lubridate::hour(hour)
   ) %>%
-  select(date, hour, temperature_mean)
+  dplyr::select(date, hour, temperature_mean)
 
 # Ensure date format matches for faceting 
 rk_cv_metrics_long <- rk_cv_metrics_long %>%
@@ -154,40 +154,74 @@ weather_bg <- weather_bg %>%
   mutate(temp_err = temp_to_err(temperature_mean))
 
 # Plot LOOCV error metrics with transformed temperature as background histogram
-p_loocv <- ggplot(rk_cv_metrics_long, 
+p_loocv <- ggplot(rk_cv_metrics_long,
                   aes(x = hour, y = value, color = metric, group = metric)) +
-  geom_col(data = weather_bg, 
-           aes(x = hour, y = temp_err, fill = temperature_mean), 
-           inherit.aes = FALSE, width = 0.95, alpha = 0.55) +
+  geom_col(data = weather_bg,
+           aes(x = hour, y = temp_err, fill = temperature_mean),
+           inherit.aes = FALSE, width = 0.95, alpha = 0.5) +
   geom_line(linewidth = 1.2) +
-  geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"), color = "grey60") +
   geom_point(size = 1.5, alpha = 0.7) +
   ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +
   scale_color_manual(
-    values = c("rk_cv_rmse" = "#0072B2", "rk_cv_mae"  = "#D55E00"),
-    labels = c("rk_cv_rmse" = "Root Mean Square Error (RMSE)",
-               "rk_cv_mae"  = "Mean Absolute Error (MAE)")
+    breaks = c("rk_cv_mae", "rk_cv_rmse"),  # controls legend order
+    values = c("rk_cv_rmse" = "#041014", "rk_cv_mae"  = "#be4d25"),
+    labels = c("rk_cv_mae"  = "Mean Absolute Error (MAE)",
+               "rk_cv_rmse" = "Root Mean Square Error (RMSE)")
   ) +
   scale_fill_gradientn(
-    name   = "Temperature [°C]",
+    name    = "Temperature [°C]",
     colours = c("#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c"),
     limits  = rng_temp
   ) +
-  scale_linetype_manual(name = "", 
-                        values = c("Perfect Prediction (Error = 0)" = "dotted")
+  scale_linetype_manual(
+    name = NULL,
+    values = c("Error = 0" = "dotted")
   ) +
   scale_x_continuous(breaks = c(0, 6, 12, 18, 24), limits = c(0, 24)) +
-  scale_y_continuous(name = "Error Metric [°C]",
-                     sec.axis = sec_axis(~ err_to_temp(.), name = "Temperature Mean [°C]")) +
+  scale_y_continuous(
+    name = "Error Metric [°C]",
+    sec.axis = sec_axis(~ err_to_temp(.), name = "Hourly Mean Temperature [°C]")
+  ) +
   labs(x = "Hour of the Day", color = "Metrics") +
+  guides(
+    color = guide_legend(
+      title = "Metrics",
+      nrow = 1,
+      byrow = TRUE,
+      order = 1,
+      override.aes = list(linewidth = 1.2, size = 2)
+    ),
+    fill = guide_colorbar(
+      title.position = "top",
+      label.position = "bottom",
+      order = 2,
+      barwidth  = unit(5.5, "cm"),
+      barheight = unit(0.45, "cm"),
+      ticks = FALSE
+    ),
+    linetype = guide_legend(
+      order = 3,
+      override.aes = list(color = "grey60", linewidth = 1)
+    )
+  ) +
   theme_minimal(base_size = 14) +
   theme(
     legend.position  = "top",
     legend.box       = "horizontal",
+    legend.box.just  = "left",
+    legend.title = element_text(face = "bold"),
+    legend.text  = element_text(size = 11),
+    legend.key.height = unit(0.6, "lines"),
+    legend.key.width  = unit(1.3, "lines"),
+    legend.spacing.x  = unit(0.8, "lines"),
+    legend.margin     = margin(b = 6),
     panel.grid.minor = element_blank(),
     panel.spacing    = unit(0.8, "lines"),
     strip.background = element_rect(fill = "grey90", color = NA),
-    strip.text       = element_text(face = "bold")
+    strip.text       = element_text(face = "bold"),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y.left  = element_text(margin = margin(r = 15)),
+    axis.title.y.right = element_text(margin = margin(l = 15))
   )
 
 # Display plot
@@ -197,7 +231,6 @@ p_loocv
 ggsave("../plots_report/LOOCV_RK_metrics_12days_temp.png",
        plot = p_loocv, width = 12, height = 8, dpi = 300)
 ```
-
 
 ```{r Analyse RK metrics 12 days}
 
@@ -240,8 +273,8 @@ p_rk <- ggplot(rk_metrics_long, aes(x = hour, y = value, color = metric, group =
 p_rk
 
 # Save plot
-ggsave("../plots_report/RK_metrics_12days.png",
-       plot = p_rk, width = 12, height = 8, dpi = 300)
+# ggsave("../plots_report/RK_metrics_12days.png",
+#        plot = p_rk, width = 12, height = 8, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
@@ -268,7 +301,7 @@ weather_df_subset <- weather_df %>%
       dateobserved >= ymd_hms("2023-07-01 00:00:00", tz = "Europe/Berlin"),
       dateobserved <= ymd_hms("2023-07-12 23:00:00", tz = "Europe/Berlin")
   )  %>%
-  select(-stationname, -description, -location)
+  dplyr::select(-stationname, -description, -location)
 
 # Drop geometry as this is not relevant for this analysis
 df_env <- weather_df_subset %>% 
@@ -333,12 +366,13 @@ df_long <- df_long[!is.na(df_long$value), ]
 
 # Add nice labels for subplots
 nice_names <- c(
-  dewpoint_mean = "Dewpoint",
-  precipitation_mean = "Precipitation",
-  pressure_mean = "Pressure",
-  relativehumidity_mean = "Relative Humidity",
-  solarradiation_mean = "Solar Radiation",
-  windspeed_mean = "Wind Speed"
+  dewpoint_mean           = "Dewpoint [°C]",
+  precipitation_mean      = "Precipitation [mm]",
+  pressure_mean           = "Pressure [hPa]",
+  relativehumidity_mean = "Relative Humidity [%]",
+  solarradiation_mean  = "Solar Radiation [W/m²]",
+  temperature_mean        = "Temperature [°C]",
+  windspeed_mean       = "Wind Speed [m/s]"
 )
 
 # Plot RMSE against weather variable values
@@ -347,14 +381,16 @@ rel_rmse_weather <- ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
   geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
   facet_wrap(~ variable, scales = "free_x", labeller = labeller(variable = nice_names)) +
   theme_minimal(base_size = 14) +
-  labs(x = "Meteorological variable hourly mean", y = "RMSE [°C]") +
+  labs(x = "Hourly Mean of Meteorological Variable", y = "RMSE [°C]") +
   theme(
     legend.position   = "top",
     panel.grid.minor  = element_blank(),
     strip.background  = element_rect(fill = "grey90", color = NA),
     strip.text        = element_text(face = "bold"),
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5)
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
   )
 
 rel_rmse_weather
@@ -385,15 +421,34 @@ di_weather <- ggplot(df_long, aes(
   ) +
   facet_wrap(~ variable, scales = "free_y", labeller = labeller(variable = nice_names)) +
   theme_minimal(base_size = 14) +
-  labs(x = "Hour of the Day", y = "Meteorological variable hourly mean", color = "RMSE [°C]",
+  labs(x = "Hour of the Day", y = "Hourly Mean of Meteorological Variable", color = "RMSE [°C]",
        size  = "RMSE [°C]") +
+  guides(
+    color = guide_colorbar(
+      title.position = "top",
+      title.hjust    = 0.5,
+      barwidth  = unit(6, "cm"),
+      barheight = unit(0.5, "cm")
+    ),
+    size = guide_legend(order = 2)  # keep size legend separate
+  ) +
   theme(
-    legend.position = "bottom",
+    legend.position  = "top",
+    legend.box       = "horizontal",
+    legend.box.just  = "left",
+    legend.title = element_text(face = "bold"),
+    legend.text  = element_text(size = 11),
+    legend.key.height = unit(0.6, "lines"),
+    legend.key.width  = unit(1.3, "lines"),
+    legend.spacing.x  = unit(0.8, "lines"),
+    legend.margin     = margin(b = 6),
     panel.grid.minor  = element_blank(),
     strip.background  = element_rect(fill = "grey90", color = NA),
     strip.text        = element_text(face = "bold"),
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5)
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
   )
 
 di_weather
