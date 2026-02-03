@@ -337,49 +337,7 @@ vif_df <- bind_rows(
     model = factor(model, levels = c("No filter", "Gaussian filter"))
   )
 
-p_vif_comp <- ggplot(vif_df, aes(x = covariate, y = VIF,
-                                 fill = covariate, alpha = model)) +
-  geom_col(
-    position = position_dodge(width = 0.75),
-    width = 0.65,
-    color = "grey30",
-    linewidth = 0.3
-  ) +
-  geom_hline(yintercept = 5, linetype = "dashed",
-             color = "black", linewidth = 0.8) +
-  annotate("text", x = 0.5, y = 5.5,
-           label = "left: No filter; right: Gaussian filter\nVIF > 5 selected multicollinearity threshold",
-           hjust = 0, size = 4, color = "grey40") +
-  geom_text(
-    aes(label = sprintf("%.2f", VIF)),
-    position = position_dodge(width = 0.75),
-    vjust = -0.5,
-    size = 4
-  ) +
-  scale_fill_manual(
-    values = c(
-      "Building height" = "darkorange3",
-      "Canopy height"   = "darkolivegreen",
-      "Elevation"       = "burlywood2"
-    ),
-    guide = "none"
-  ) +
-  scale_alpha_manual(
-    values = c("No filter" = 1.0, "Gaussian filter" = 0.75)
-  ) +
-  guides(alpha = "none") +
-  labs(x = "Covariate", y = "VIF") +
-  theme_minimal(base_size = 11) +
-  theme(
-    axis.text.x = element_text(angle = 30, hjust = 0.8),
-    axis.title.x = element_text(margin = margin(t = 15)),
-    axis.title.y = element_text(margin = margin(r = 15)),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    panel.grid.major.y = element_line(color = "grey85")
-  )
-
-p_vif_comp
+4
 
 # Save output to file
 ggsave("../plots_report/multicollinearity.png", p_vif_comp, width = 8, height = 5, dpi = 300)
