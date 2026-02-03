@@ -94,7 +94,7 @@ writeVector(lulc_polygons, "../data/OSM_LULC/hd_osm_lulc_polygons.gpkg", overwri
 ```{r Compare the Stadtklima-Analyse with my RK prediction surface}
 
 # Load rasters and vector data
-mod  <- rast("../RK_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction.tif")
+mod  <- rast("../RK_ANBH_07_2023_12days/rk_predictions/2023-07-09_1400_rk_prediction.tif")
 ref5 <- rast("../data/stadtklimaanalyse_2023/2_22_074_ist_t14_rev01.tif")
 river <- st_read("../data/waterways/waterways_HD.gpkg")                 
 landuse <- st_read("../data/OSM_LULC/hd_osm_lulc_polygons.gpkg")
@@ -210,47 +210,33 @@ hd_bounds_sf <- st_as_sf(hd_bounds)
 # Plot RK model map  
 p_rk_map <- ggplot() +
   geom_raster(data = mod_df, aes(x = x, y = y, fill = value)) +
-  geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
   scale_fill_viridis_c(name = "Temperature [°C]", limits = rng) +
   coord_sf() + 
   annotation_scale(location = "br", width_hint = 0.3) +    
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(
-      subtitle = sprintf("Timestamp: 2023-07-09 14:00\nTemperature value range: %.1f – %.1f °C", 
-                         min(mod_df$value, na.rm = TRUE), max(mod_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
     axis.title = element_blank(),
     axis.text  = element_blank(),
     panel.grid = element_blank(),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    plot.subtitle = element_text(hjust = 0.5, size = 9, face = "plain", 
-                                 margin = margin(t = 1, b = 5))
   )
 
 # Plot reference map  
 p_ref_map <- ggplot() +
   geom_raster(data = ref_df, aes(x = x, y = y, fill = value)) +
-  geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
-  scale_fill_viridis_c(name = "PET [°C]", limits = rng) +
+  scale_fill_viridis_c(name = "Physiologically Equivalent\nTemperature (PET) [°C]", limits = rng) +
   coord_sf() +
   annotation_scale(location = "br", width_hint = 0.3) +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(
-       subtitle = sprintf("Physiologically Equivalent Temperature (PET) value range: %.1f – %.1f °C", 
-                          min(ref_df$value, na.rm = TRUE), max(ref_df$value, na.rm = TRUE))) +
   theme_minimal(base_size = 13) +
   theme(
     axis.title = element_blank(),
     axis.text  = element_blank(),
     panel.grid = element_blank(),
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    plot.subtitle = element_text(hjust = 0.5, size = 9, face = "plain", 
-                                 margin = margin(t = 1, b = 5))
   )
 
 
@@ -271,9 +257,9 @@ p_ref_map
 p_rk_map
 
 # Save as PNG
-ggsave("../plots_report/rk_14-00.png", p_rk_map, width = 10, height = 5, dpi = 300)
-
-ggsave("../plots_report/urban_model_14-00.png", p_ref_map, width = 10, height = 5, dpi = 300)
+# ggsave("../plots_report/rk_14-00.png", p_rk_map, width = 8, height = 4, dpi = 300)
+# 
+# ggsave("../plots_report/urban_model_14-00.png", p_ref_map, width = 8, height = 4, dpi = 300)
 ```
 
 
@@ -314,8 +300,7 @@ p_resid_hist <- ggplot(data.frame(resid), aes(x = resid)) +
   geom_histogram(bins = 60, fill = "steelblue", color = "white", alpha = 0.8) +
   geom_vline(xintercept = 0, color = "black", linetype = "dashed", linewidth = 0.6) +
   labs(
-    subtitle = sprintf("Mean bias = %.2f °C", mean(resid)),
-    x = "Residuals (RK predictions − Urban Climate Analysis) [°C]",
+    x = "Residuals [°C]",
     y = "Number of cells"
   ) +
   theme_minimal(base_size = 13) +
@@ -325,8 +310,9 @@ p_resid_hist <- ggplot(data.frame(resid), aes(x = resid)) +
     panel.grid.minor = element_blank(),
     panel.grid.major.x = element_blank(),
     panel.grid.major.y = element_line(color = "grey85"),
-    axis.title = element_text(face = "bold")
-  )
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
+    )
 
 # Recalculate spatial residuals (per grid cell) to retain geographic structure 
 resid_raster <- mod_h - ref30_h
@@ -344,10 +330,9 @@ rmax <- ceiling(rmax / 5) * 5
 # Plot spatial residual distribution
 p_resid_map <- ggplot() +
   geom_raster(data = resid_map_df, aes(x = x, y = y, fill = residual)) +
-  geom_sf(data = river_sf, color = "lightblue", linewidth = 0.4) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.5) +
   scale_fill_gradient2(
-    name = "Residuals (°C)",
+    name = "Residuals [°C]",
     low = "#2166ac", mid = "white", high = "#b2182b",
     midpoint = 0,
     limits = c(-rmax, rmax),
@@ -358,9 +343,6 @@ p_resid_map <- ggplot() +
   annotation_scale(location = "br", width_hint = 0.3) +    
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
                          style = north_arrow_orienteering) +
-  labs(
-    subtitle = "Blue: Model colder than reference | Red: Model warmer than reference"
-  ) +
   theme_minimal(base_size = 13) +
   theme(
     plot.title = element_text(hjust = 0.5, face = "bold"),
@@ -378,9 +360,9 @@ p_resid_hist
 p_resid_map
 
 # Save as PNG
-ggsave("../plots_report/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
+# ggsave("../plots_report/residual_histogram_rk_vs_reference_2023-07-09_14-00.png", p_resid_hist, width = 10, height = 5, dpi = 300)
 
-ggsave("../plots_report/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 5, dpi = 300)
+# ggsave("../plots_report/residual_spatial_map_rk_vs_reference_2023-07-09_14-00.png", p_resid_map, width = 10, height = 4, dpi = 300)
 ```
 
 
@@ -514,14 +496,15 @@ p_landcover_corr <- ggplot(
     legend.position = "none",
     axis.text.y = element_text(size = 9),
     panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank()
+    panel.grid.major.y = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15))
   )
 
 # Display the plots
 p_landcover_corr
 
 # Save as PNG
-ggsave("../plots_report/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+# ggsave("../plots_report/landcover_correlation_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
 
 # Plot correlation by land cover class
 p_landcover_corr <- ggplot(
@@ -548,14 +531,15 @@ p_landcover_corr <- ggplot(
     legend.position = "none",
     axis.text.y = element_text(size = 9),
     panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank()
+    panel.grid.major.y = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15))
   )
 
 # Display the plots
 p_landcover_corr
 
 # Save as PNG
-ggsave("../plots_report/landcover_rmse_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
+# ggsave("../plots_report/landcover_rmse_2023-07-09_14-00.png", p_landcover_corr, width = 10, height = 5, dpi = 300)
 ```
 
 --------------------------------------------------------------------------------
@@ -566,7 +550,7 @@ RK temperature prediction surface for hourly means
 ```{r Temporal variability analysis per pixel}
 
 # Load monthly mean RK surface
-mm_july_rk  <- terra::rast("../Monthly_RK_2023/rk_predictions/2023-07-01_0000_rk_prediction.tif")
+mm_july_rk  <- terra::rast("../Monthly_ANBH_RK_2023/rk_predictions/2023-07-01_0000_rk_prediction.tif")
 
 # Directory with hourly RK predictions for July 2023
 rk_dir <- "../RK_all_07_2023/rk_predictions"
@@ -583,7 +567,192 @@ rk_sd_july <- app(rk_stack, fun = sd, na.rm = TRUE)
 
 # Coefficient of variation to show relative variability
 rk_cv_july <- rk_sd_july / rk_mean_july
+
+# Difference Map
+diff_month_hourly <- rk_mean_july - mm_july_rk
 ```
+
+```{r}
+# Clip/mask to study area
+diff_month_hourly_clip <- terra::mask(diff_month_hourly, hd_bounds)
+
+# Convert raster to data frame for ggplot
+diff_df <- as.data.frame(diff_month_hourly_clip, xy = TRUE, na.rm = TRUE)
+names(diff_df)[3] <- "delta_temp"
+
+# Plot difference map
+diff_map <- ggplot(diff_df, aes(x = x, y = y, fill = delta_temp)) +
+  geom_raster() +
+  coord_equal(expand = FALSE) +
+  scale_fill_gradient2(
+    name = expression(Delta~"T [°C]"),
+    midpoint = 0,
+    breaks = scales::pretty_breaks(n = 5)
+  ) +
+  annotation_scale(location = "br", width_hint = 0.3) +
+  annotation_north_arrow(
+    location = "tl", which_north = "true",
+    width = unit(0.9, "cm"),
+    style = north_arrow_orienteering
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text  = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  )
+
+diff_map
+
+# Save as PNG
+ggsave("../plots_report/diff_map_monthly_hourly.png", 
+       diff_map, width = 8, height = 5, dpi = 300)
+```
+
+```{r Residual variability relative to the monthly mean RK}
+
+# Compute residuals as hourly RK minus monthly mean RK
+res_stack <- rk_stack - mm_july_rk
+
+# Pixel-wise SD of residuals (temporal variability)
+res_var <- app(res_stack, fun = sd, na.rm = TRUE)
+
+# Clip data before plotting
+res_var <- terra::mask(res_var, hd_bounds)
+
+# Convert to data frame for plotting
+res_df <- as.data.frame(res_var, xy = TRUE, na.rm = TRUE)
+names(res_df)[3] <- "residual_sd"
+
+# Plot spatial SD map
+resid_var <- ggplot(res_df, aes(x = x, y = y, fill = residual_sd)) +
+  geom_raster() +
+  scale_fill_viridis_c(name = "Residual\nSD [°C]", option = "viridis",
+                       direction = 1) +
+  annotation_scale(location = "br", width_hint = 0.3) +
+  annotation_north_arrow(location = "tl", which_north = "true", 
+                         width = unit(0.9, "cm"),
+                         style = north_arrow_orienteering) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text  = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+resid_var
+
+# Save as PNG
+ggsave("../plots_report/residual_var_relative.png", resid_var, width = 8, height = 5, dpi = 300)
+```
+
+```{r Mean SD per landcover class hourly vs. monthly}
+
+# Extract mean SD per landcover polygon
+res_var_by_lc <- terra::extract(res_var, landuse, fun = mean, na.rm = TRUE)
+
+# Rename value column
+names(res_var_by_lc)[2] <- "mean_sd"
+
+# Add landcover class names
+res_var_by_lc$hd_osm_landuse_4326 <- landuse$hd_osm_landuse_4326
+
+# Aggregate by class
+res_var_summary <- res_var_by_lc %>%
+  group_by(hd_osm_landuse_4326) %>%
+  summarise(mean_sd = mean(mean_sd, na.rm = TRUE)) %>%
+  arrange(desc(mean_sd))
+
+# Map numeric land-cover codes to descriptive class labels
+res_var_summary <- res_var_summary %>%
+  dplyr::mutate(lu_label = lu_lookup[as.character(hd_osm_landuse_4326)])
+
+# Plot Residual Variability by Landcover Class",
+# Standard deviation of hourly RK from monthly RK mean residuals (July 2023)
+resid_var_land <- ggplot(
+  res_var_summary,
+  aes(x = reorder(lu_label, mean_sd), y = mean_sd, fill = lu_label)) +
+  geom_col(width = 0.6, color = "grey30") +
+  geom_text(aes(label = sprintf("%.2f", mean_sd)), hjust = -0.1, size = 3) +
+  scale_fill_manual(values = landcover_colors) +
+  coord_flip() +
+  labs(x = NULL, y = "Mean SD (°C)") +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "none",
+    axis.text.y = element_text(size = 9),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+resid_var_land
+
+# Save as PNG
+ggsave("../plots_report/residual_var_relative_per_landcover.png", 
+       resid_var_land, width = 10, height = 5, dpi = 300)
+```
+
+```{r}
+# Option 2: Cleveland dot plot with tight x-axis (+ overall mean reference line)
+# Assumes you already have `res_var_summary` with columns: lu_label, mean_sd
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# Ensure labels exist + drop NAs
+plot_df <- res_var_summary %>%
+  filter(!is.na(lu_label), !is.na(mean_sd)) %>%
+  mutate(lu_label = as.character(lu_label))
+
+# Order classes by mean SD
+plot_df <- plot_df %>%
+  arrange(mean_sd) %>%
+  mutate(lu_label = factor(lu_label, levels = lu_label))
+
+# Overall mean (reference)
+overall_mean <- mean(plot_df$mean_sd, na.rm = TRUE)
+
+# Tight x-axis limits (adds a small padding)
+rng <- range(plot_df$mean_sd, na.rm = TRUE)
+pad <- diff(rng) * 0.15
+xlim_tight <- c(rng[1] - pad, rng[2] + pad)
+
+sd_dotplot <- ggplot(plot_df, aes(x = mean_sd, y = lu_label)) +
+  geom_vline(xintercept = overall_mean, linetype = "dashed", linewidth = 0.6, alpha = 0.35) +
+  geom_point(aes(color = lu_label), size = 2.8) +
+  geom_text(aes(label = sprintf("%.2f", mean_sd)), color = "black", hjust = 0,
+            nudge_x = 0.006, size = 3, show.legend = FALSE) +
+  scale_color_manual(values = landcover_colors, guide = "none") +
+  scale_x_continuous(limits = xlim_tight, breaks = scales::pretty_breaks(n = 5),
+                     expand = expansion(mult = c(0, 0.06))) +
+  labs(x = "Mean SD [°C]", y = NULL) +
+  theme_bw(base_size = 13) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15))
+  )
+
+sd_dotplot
+
+# Save the plot
+ggsave("../plots_report/residual_var_relative_per_landcover_dotplot.png", sd_dotplot, width = 10, height = 5, dpi = 300)
+```
+
+
+Old plots
 
 ```{r Plot temporal variability of hourly RK predictions}
 
@@ -654,92 +823,3 @@ temp_coeff_var
 ggsave("../plots_report/temporal_cv_hourly_rk_predictions.png", 
        temp_coeff_var, width = 10, height = 5, dpi = 300)
 ```
-
-```{r Residual variability relative to the monthly mean RK}
-
-# Compute residuals as hourly RK minus monthly mean RK
-res_stack <- rk_stack - mm_july_rk
-
-# Pixel-wise SD of residuals (temporal variability)
-res_var <- app(res_stack, fun = sd, na.rm = TRUE)
-
-# Clip data before plotting
-res_var <- terra::mask(res_var, hd_bounds)
-
-# Convert to data frame for plotting
-res_df <- as.data.frame(res_var, xy = TRUE, na.rm = TRUE)
-names(res_df)[3] <- "residual_sd"
-
-# Plot spatial SD map
-resid_var <- ggplot(res_df, aes(x = x, y = y, fill = residual_sd)) +
-  geom_raster() +
-  coord_equal() +
-  scale_fill_viridis_c(name = "Residual SD (°C)", option = "viridis",
-                       direction = 1) +
-  annotation_scale(location = "br", width_hint = 0.3) +    
-  annotation_north_arrow(location = "tl", which_north = "true", 
-                         width = unit(0.9, "cm"),
-                         style = north_arrow_orienteering) +
-  labs(x = NULL, y = NULL) +
-  theme_minimal(base_size = 13) +
-  theme(
-    panel.grid = element_blank(),
-    legend.position = "right",
-    plot.title = element_text(face = "bold")
-  )
-
-resid_var
-
-# Save as PNG
-ggsave("../plots_report/residual_var_relative.png", 
-       resid_var, width = 10, height = 5, dpi = 300)
-```
-
-```{r Mean SD per landcover class hourly vs. monthly}
-
-# Extract mean SD per landcover polygon
-res_var_by_lc <- terra::extract(res_var, landuse, fun = mean, na.rm = TRUE)
-
-# Rename value column
-names(res_var_by_lc)[2] <- "mean_sd"
-
-# Add landcover class names
-res_var_by_lc$hd_osm_landuse_4326 <- landuse$hd_osm_landuse_4326
-
-# Aggregate by class
-res_var_summary <- res_var_by_lc %>%
-  group_by(hd_osm_landuse_4326) %>%
-  summarise(mean_sd = mean(mean_sd, na.rm = TRUE)) %>%
-  arrange(desc(mean_sd))
-
-# Map numeric land-cover codes to descriptive class labels
-res_var_summary <- res_var_summary %>%
-  dplyr::mutate(lu_label = lu_lookup[as.character(hd_osm_landuse_4326)])
-
-# Plot Residual Variability by Landcover Class",
-# Standard deviation of hourly RK from monthly RK mean residuals (July 2023)
-resid_var_land <- ggplot(
-  res_var_summary,
-  aes(x = reorder(lu_label, mean_sd), y = mean_sd, fill = lu_label)) +
-  geom_col(width = 0.6, color = "grey30") +
-  geom_text(aes(label = sprintf("%.2f", mean_sd)), hjust = -0.1, size = 3) +
-  scale_fill_manual(values = landcover_colors) +
-  coord_flip() +
-  labs(x = NULL, y = "Mean SD (°C)") +
-  theme_bw(base_size = 13) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold"),
-    plot.subtitle = element_text(hjust = 0.5),
-    legend.position = "none",
-    axis.text.y = element_text(size = 9),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.y = element_blank()
-  )
-
-resid_var_land
-
-# Save as PNG
-ggsave("../plots_report/residual_var_relative_per_landcover.png", 
-       resid_var_land, width = 10, height = 5, dpi = 300)
-```
-
