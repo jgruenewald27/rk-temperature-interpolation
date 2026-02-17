@@ -1,17 +1,52 @@
 # Assessing the Impact of Open Environmental Data on Temperature Predictions Using Regression-Kriging
 
-## Primary Research Goals
-This study incorporates high-temporal-resolution air temperature data from weather measurement sensors to account for city-scale differences in climatic and environmental conditions. In order to meet the demand for spatially continuous climatological datasets, Regression Kriging is applied to estimate continuous air-temperature surfaces across the city of Heidelberg. Next to air temperature, elevation, tree canopy height and building height will be included as covariates, as their influence on thermal comfort is widely cited. The resulting high-resolution continuous temperature grids provide a valuable addition to the existing city-wide location-based air temperature measurements, with the potential to enhance heat-adaptive routing by offering a subjective representation of thermal conditions at the neighbourhood scale.
+## Overview
 
-## Research questions of this study:
-- *RQ 1:* How accurately can regression–kriging predict spatial patterns of hourly air temperature in an urban environment using a sparse sensor network under different meteorological conditions?
-- *RQ 2:* Which environmental and urban covariates explain spatial variability in urban air temperature, and how does their relative explanatory importance vary over the diurnal cycle and across meteorological conditions?
-- *RQ 3:* How does temporal aggregation scale affect the performance and outcomes of RK-based temperature interpolation?
+This repository contains the complete modelling workflow for predicting air temperature in Heidelberg (Germany) using **Regression–Kriging (RK)**.
+
+The project integrates:
+
+- High-temporal-resolution air temperature sensor data (2023)
+- Elevation, global forest canopy height, and global building height as covariates
+- Hourly and monthly RK frameworks
+- Spatial autocorrelation diagnostics
+- Covariates importance assessment
+
+The resulting high-temporal resolution temperature grids provide spatially continuous climatological datasets and support research on urban heat stress and heat-adaptive routing at a spatial resolution of 30 m.
+
+---
+
+## Primary Research Goals
+
+This study incorporates high-temporal-resolution air temperature data from weather measurement sensors to account for city-scale climatic and environmental variability.
+
+RK is applied to generate spatially continuous air-temperature surfaces across Heidelberg. In addition to air temperature, the following environmental covariates are included:
+
+- Elevation  
+- Tree canopy height  
+- Building height 
+
+These variables are widely cited as influencing urban thermal conditions and human thermal comfort. The resulting temperature grids complement existing point-based measurements and provide a spatially continuous representation of neighbourhood-scale thermal conditions.
+
+## Research Questions
+
+- **RQ 1:** How accurately can regression–kriging predict spatial patterns of hourly air temperature in an urban environment using a sparse sensor network under different meteorological conditions?
+- **RQ 2:** Which environmental and urban covariates explain spatial variability in urban air temperature, and how does their relative explanatory importance vary over the diurnal cycle and across meteorological conditions?
+- **RQ 3:** How does temporal aggregation scale affect the performance and outcomes of RK-based temperature interpolation?
+
+---
+
+## Repository Structure
+
+**data/** Input datasets
+**plots/** Generated output figures
+**python_scripts/** Information on how to derive temp measurements from server
+**r_scripts/** RMarkdown with all analysis steps
 
 ---
 
 ## How to run the analysis
-The analysis consists of eight RMarkdown scripts, each covering a specific component of the workflow. They can be grouped into three smaller work packages:
+The analysis consists of eight RMarkdown scripts, each covering a specific component of the workflow. They can be grouped into three smaller work packages with the recommended execution order being:
 
 ### Work Package 1 – Hourly RK
 
@@ -37,13 +72,24 @@ The analysis consists of eight RMarkdown scripts, each covering a specific compo
 
 ---
 
-## Example RK Temperature Surface for the Study Area
+## Example Output
+
+Below is an example hourly regression–kriging temperature surface  (7 July 2023, 17:00):
 
 ![Regression Kriging Temperature Surface](plots/2023-07-07_1700_rk_prediction_map.png)
 
 ---
 
-## Some Important References
+## Reproducibility
+
+### Requirements
+
+- R ≥ 4.2  
+- RStudio recommended  
+
+---
+
+## Reference Selection
 
 Hengl, T. (2009). A practical guide to geostatistical mapping. Vol. 52. Hengl Amsterdam, Netherlands.
 
