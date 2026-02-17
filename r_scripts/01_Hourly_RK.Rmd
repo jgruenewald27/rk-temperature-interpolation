@@ -1,5 +1,5 @@
 ---
-title: "Hourly_RK"
+title: "hourly_rk"
 author: "Johannes Gruenewald"
 date: "2024-11-26"
 output: html_document
