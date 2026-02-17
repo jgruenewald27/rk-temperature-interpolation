@@ -3,13 +3,15 @@
 ## Primary Research Goals
 This study incorporates high-temporal-resolution air temperature data from weather measurement sensors to account for city-scale differences in climatic and environmental conditions. In order to meet the demand for spatially continuous climatological datasets, Regression Kriging is applied to estimate continuous air-temperature surfaces across the city of Heidelberg. Next to air temperature, elevation, tree canopy height and building height will be included as covariates, as their influence on thermal comfort is widely cited. The resulting high-resolution continuous temperature grids provide a valuable addition to the existing city-wide location-based air temperature measurements, with the potential to enhance heat-adaptive routing by offering a subjective representation of thermal conditions at the neighbourhood scale.
 
-## Fundamental research questions of this study:
+## Research questions of this study:
 - *RQ 1:* How accurately can regression–kriging predict spatial patterns of hourly air temperature in an urban environment using a sparse sensor network under different meteorological conditions?
 - *RQ 2:* Which environmental and urban covariates explain spatial variability in urban air temperature, and how does their relative explanatory importance vary over the diurnal cycle and across meteorological conditions?
 - *RQ 3:* How does temporal aggregation scale affect the performance and outcomes of RK-based temperature interpolation?
 
+---
+
 ## How to run the analysis
-The analysis consists of eight RMarkdown scripts, each covering a specific component of the workflow. They can be grouped in several smaller work packages:
+The analysis consists of eight RMarkdown scripts, each covering a specific component of the workflow. They can be grouped into three smaller work packages:
 
 ### Work Package 1 – Hourly RK
 
@@ -33,6 +35,8 @@ The analysis consists of eight RMarkdown scripts, each covering a specific compo
 7. [07_monthly_rk.Rmd](r_scripts/07_monthly_rk.Rmd) Complete RK framework with monthly temporal resolution.
 8. [08_hourly_rk_gaussian.Rmd](r_scripts/08_hourly_rk_gaussian.Rmd) Variant of the hourly RK framework using Gaussian-smoothed canopy height data.
 
+---
+
 ## Example Regression-Kriging Temperature Surface for the Study Area
 
-![Regression Kriging Temperature Surface](/plots/2023-07-09_1400_rk_prediction_map.png)
+![Regression Kriging Temperature Surface](plots/2023-07-07_1700_rk_prediction_map.png)
