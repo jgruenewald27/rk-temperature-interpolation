@@ -20,6 +20,8 @@ data/OSM_LULC/.DS_Store
 data/temp_HD/.DS_Store
 masterthesis_temp_interpolation/.DS_Store
 data/AOI/OSM_boundaries_HD_buffered.geojson
+data/AOI/OSM_boundaries_Germany.geojson
+data/AOI/OSM_boundaries_BW.geojson
 data/temp_HD/sensor_data_year_2023.geojson
 data/temp_HD/sensor_data_20230112_31days.gpkg
 data/temp_HD/sensor_data_20230111_30days.gpkg
