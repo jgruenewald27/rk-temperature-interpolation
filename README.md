@@ -37,6 +37,22 @@ The analysis consists of eight RMarkdown scripts, each covering a specific compo
 
 ---
 
-## Example Regression-Kriging Temperature Surface for the Study Area
+## Example RK Temperature Surface for the Study Area
 
 ![Regression Kriging Temperature Surface](plots/2023-07-07_1700_rk_prediction_map.png)
+
+---
+
+## Some Important References
+
+Hengl, T. (2009). A practical guide to geostatistical mapping. Vol. 52. Hengl Amsterdam, Netherlands.
+
+Hengl, T.; Heuvelink, G. B. M. & Rossiter, D. (2007). About regression-kriging: From equations to case studies. In: Computers & Geosciences 33, 1301–1315. doi: 10.1016/j.cageo.2007.05.001.
+
+Kolaxidis, N.; Ludwig, C.; Knoblauch, S.; Fürle, J.; Foshag, K.; Fendrich, S.; Lautenbach, S. & Zipf, A. (2025). Mitigating Heat Stress by Reducing Solar Exposure in Pedestrian Routing. In: Transactions in GIS 29(6), e70110. doi: 10.1111/tgis.70110.
+
+Oliver, M. A. &Webster, R. (2015). Basic Steps in Geostatistics: The Variogram and Kriging. SpringerBriefs in Agriculture. Cham: Springer International Publishing. doi: 10.1007/978-3-319-15865-5.
+
+Szymanowski, M.; Kryza, M. & Spallek, W. (2013). Regression-based air temperature spatial prediction models: an example from Poland. In: Meteorologische Zeitschrift 22(5), 577–585. doi: 10.1127/0941-2948/2013/0440.
+
+
