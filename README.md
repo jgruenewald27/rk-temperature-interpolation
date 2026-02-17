@@ -39,8 +39,11 @@ These variables are widely cited as influencing urban thermal conditions and hum
 ## Repository Structure
 
 **data/** Input datasets
+
 **plots/** Generated output figures
+
 **python_scripts/** Information on how to derive temp measurements from server
+
 **r_scripts/** RMarkdown with all analysis steps
 
 ---
