@@ -1,0 +1,467 @@
+---
+title: "hourly_rk_results"
+output: html_document
+date: "2025-12-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Packages}
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+library(lubridate)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(ggforce)
+library(viridis)
+
+# Spatial Reading
+library(sf)
+```
+
+--------------------------------------------------------------------------------
+
+This script reads the saved hourly RK performance outputs for the study period:
+2023-07-01 to 2023-07-12 and produces plots of MLR fit, RK and LOOCV errors 
+(RMSE/MAE), and exploratory plots relating LOOCV RMSE to hourly meteorological 
+conditions over the 12-day period.
+
+--------------------------------------------------------------------------------
+
+```{r Read performance metrics}
+
+# Read MLR metrics
+lm_metrics <- read.csv("../RK_ANBH_07_2023_12days/mlr_model_performance_summary.csv",
+                       stringsAsFactors = FALSE)
+# Read LOOCV metrics
+rk_cv_metrics <- read.csv("../RK_ANBH_07_2023_12days/rk_loocv_metrics.csv",
+                       stringsAsFactors = FALSE)
+# Read RK metrics
+rk_metrics <- read.csv("../RK_ANBH_07_2023_12days/rk_metrics.csv",
+                       stringsAsFactors = FALSE)
+
+# Clean and standardize timestamp, date, and hour columns
+preprocess_metrics <- function(df) {
+  df %>%
+    mutate(
+      timestamp = if_else(nchar(timestamp) == 10, 
+                          paste0(timestamp, " 00:00:00"), timestamp),
+      timestamp = as.POSIXct(timestamp, 
+                             format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+      date = as.Date(timestamp, tz = "Europe/Berlin"),
+      hour = lubridate::hour(timestamp)
+    )
+}
+
+# Apply preprocessing to each metric table
+lm_metrics     <- preprocess_metrics(lm_metrics)
+rk_cv_metrics  <- preprocess_metrics(rk_cv_metrics)
+rk_metrics     <- preprocess_metrics(rk_metrics)
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+
+# Reshape to long format
+rk_cv_metrics_long <- rk_cv_metrics %>%
+  pivot_longer(cols = c(rk_cv_rmse, rk_cv_mae),
+               names_to = "metric",
+               values_to = "value")
+
+# Reshape to long format
+rk_metrics_long <- rk_metrics %>%
+  pivot_longer(cols = c(rk_rmse, rk_mae),
+               names_to = "metric",
+               values_to = "value")
+```
+
+```{r Analyse MLR metrics 12 days}
+
+# Daily Evaluation of MLR Model Performance
+p_lm <- ggplot(lm_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)"),color = "grey60") +
+  geom_point(size = 1.5, alpha = 0.7) +
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +
+  scale_color_manual(
+    values = c(
+      "r_squared"     = "#0072B2",
+      "adj_r_squared" = "#D55E00"
+    ),
+    labels = c("r_squared"     = expression(R^2), "adj_r_squared" = expression(Adjusted~R^2))
+  ) +
+  scale_linetype_manual(name   = "", values = c("Perfect Fit (R² = 1)" = "dotted")) +
+  labs(
+    title    = "Daily Variation in Multiple Linear Regression Model Performance",
+    subtitle = "Hourly R² and Adjusted R² for models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Metric Value",
+    color    = "Metrics"
+  ) +
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position    = "top",
+    legend.box         = "horizontal",
+    panel.grid.minor   = element_blank(),
+    panel.spacing      = unit(0.8, "lines"),
+    strip.background   = element_rect(fill = "grey90", color = NA),
+    strip.text         = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+# Show the plot
+p_lm
+
+# Save plot
+# ggsave("../plots_report/MLR_RK_metrics_12days.png",
+#        plot = p_lm, width = 12, height = 8, dpi = 300)
+```
+
+```{r Analyse LOOCV metrics 12 days}
+
+# Prepare hourly background temperature data
+weather_bg <- weather_hourly_means %>%
+  mutate(
+      timestamp = as.POSIXct(hour, 
+                             format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+      date = as.Date(hour, tz = "Europe/Berlin"),
+      hour = lubridate::hour(hour)
+  ) %>%
+  dplyr::select(date, hour, temperature_mean)
+
+# Ensure date format matches for faceting 
+rk_cv_metrics_long <- rk_cv_metrics_long %>%
+  mutate(date = as.Date(date))
+
+# Define ranges for linear transformation between temperature and error scales
+rng_err  <- range(rk_cv_metrics_long$value, na.rm = TRUE)
+rng_temp <- range(weather_bg$temperature_mean, na.rm = TRUE)
+
+# Functions to map temperature to error scale and back
+temp_to_err <- function(t) {
+  (t - rng_temp[1]) / diff(rng_temp) * diff(rng_err) + rng_err[1]
+}
+err_to_temp <- function(e) {
+  (e - rng_err[1]) / diff(rng_err) * diff(rng_temp) + rng_temp[1]
+}
+
+# Apply transformation so temperature can be plotted on the error axis
+weather_bg <- weather_bg %>%
+  mutate(temp_err = temp_to_err(temperature_mean))
+
+# Plot LOOCV error metrics with transformed temperature as background histogram
+p_loocv <- ggplot(rk_cv_metrics_long,
+                  aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_col(data = weather_bg,
+           aes(x = hour, y = temp_err, fill = temperature_mean),
+           inherit.aes = FALSE, width = 0.95, alpha = 0.5) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5, alpha = 0.7) +
+  ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4, scales = "fixed") +
+  scale_color_manual(
+    breaks = c("rk_cv_mae", "rk_cv_rmse"),  # controls legend order
+    values = c("rk_cv_rmse" = "#041014", "rk_cv_mae"  = "#be4d25"),
+    labels = c("rk_cv_mae"  = "Mean Absolute Error (MAE)",
+               "rk_cv_rmse" = "Root Mean Square Error (RMSE)")
+  ) +
+  scale_fill_gradientn(
+    name    = "Temperature [°C]",
+    colours = c("#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c"),
+    limits  = rng_temp
+  ) +
+  scale_linetype_manual(
+    name = NULL,
+    values = c("Error = 0" = "dotted")
+  ) +
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24), limits = c(0, 24)) +
+  scale_y_continuous(
+    name = "Error Metric [°C]",
+    sec.axis = sec_axis(~ err_to_temp(.), name = "Hourly Mean Temperature [°C]")
+  ) +
+  labs(x = "Hour of the Day", color = "Metrics") +
+  guides(
+    color = guide_legend(
+      title = "Metrics",
+      nrow = 1,
+      byrow = TRUE,
+      order = 1,
+      override.aes = list(linewidth = 1.2, size = 2)
+    ),
+    fill = guide_colorbar(
+      title.position = "top",
+      label.position = "bottom",
+      order = 2,
+      barwidth  = unit(5.5, "cm"),
+      barheight = unit(0.45, "cm"),
+      ticks = FALSE
+    ),
+    linetype = guide_legend(
+      order = 3,
+      override.aes = list(color = "grey60", linewidth = 1)
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "top",
+    legend.box       = "horizontal",
+    legend.box.just  = "left",
+    legend.title = element_text(face = "bold"),
+    legend.text  = element_text(size = 11),
+    legend.key.height = unit(0.6, "lines"),
+    legend.key.width  = unit(1.3, "lines"),
+    legend.spacing.x  = unit(0.8, "lines"),
+    legend.margin     = margin(b = 6),
+    panel.grid.minor = element_blank(),
+    panel.spacing    = unit(0.8, "lines"),
+    strip.background = element_rect(fill = "grey90", color = NA),
+    strip.text       = element_text(face = "bold"),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y.left  = element_text(margin = margin(r = 15)),
+    axis.title.y.right = element_text(margin = margin(l = 15))
+  )
+
+# Display plot
+p_loocv
+
+# Save plot
+ggsave("../plots_report/LOOCV_RK_metrics_12days_temp.png",
+       plot = p_loocv, width = 12, height = 8, dpi = 300)
+```
+
+```{r Analyse RK metrics 12 days}
+
+# Daily Evaluation of the Regression-Kriging Model Performance Metrics
+p_rk <- ggplot(rk_metrics_long, aes(x = hour, y = value, color = metric, group = metric)) +
+  geom_line(linewidth = 1.2) +
+  geom_hline(aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)"),color = "grey60") +
+  geom_point(size = 1.5, alpha = 0.7) +
+  facet_wrap(~ date, ncol = 3, scales = "fixed") +  
+  scale_color_manual(
+    values = c(
+      "rk_rmse" = "#0072B2",
+      "rk_mae"  = "#D55E00"
+    ),
+    labels = c(
+      "rk_rmse" = "Root Mean Square Error (RMSE)",
+      "rk_mae"  = "Mean Absolute Error (MAE)"
+    )
+  ) +
+  scale_linetype_manual(name   = "", values = c("Perfect Prediction (Error = 0)" = "dotted")) +
+  labs(
+    title    = "Daily Variation of Regression-Kriging Model Performance",
+    subtitle = "Hourly RMSE and MAE for models predicting hourly mean temperature",
+    x        = "Hour of the Day",
+    y        = "Error Metric [°C]",
+    color    = "Metrics"
+  ) +
+  scale_x_continuous(breaks = c(0, 6, 12, 18, 24)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+# Show the plot
+p_rk
+
+# Save plot
+# ggsave("../plots_report/RK_metrics_12days.png",
+#        plot = p_rk, width = 12, height = 8, dpi = 300)
+```
+
+--------------------------------------------------------------------------------
+
+```{r Impact of weather conditions on model performance}
+
+# Prep weather condition data
+weather_df <- sf::read_sf('../data/temp_HD/sensor_data_20230107_31days.gpkg')
+
+# Drop all measurement stations which didn't collect data the entire year around
+weather_df <- weather_df %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Create a subset for the relevant timestamps
+weather_df_subset <- weather_df %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
+  filter(
+      dateobserved >= ymd_hms("2023-07-01 00:00:00", tz = "Europe/Berlin"),
+      dateobserved <= ymd_hms("2023-07-12 23:00:00", tz = "Europe/Berlin")
+  )  %>%
+  dplyr::select(-stationname, -description, -location)
+
+# Drop geometry as this is not relevant for this analysis
+df_env <- weather_df_subset %>% 
+  st_drop_geometry()
+
+# Floor values to closest hour before calculating hourly mean
+df_env <- df_env %>%
+  mutate(hour = floor_date(dateobserved, "hour"))
+
+# Calculating hourly means of weather variables
+weather_hourly_means <- df_env %>%
+  group_by(hour) %>%
+  summarise(
+    temperature_mean       = mean(temperature, na.rm = TRUE),
+    relativehumidity_mean  = mean(relativehumidity, na.rm = TRUE),
+    dewpoint_mean          = mean(dewpoint, na.rm = TRUE),
+    pressure_mean          = mean(atmosphericpressure, na.rm = TRUE),
+    solarradiation_mean    = mean(solarradiation, na.rm = TRUE),
+    precipitation_mean     = mean(precipitation, na.rm = TRUE),
+    windspeed_mean         = mean(windspeed, na.rm = TRUE),
+    
+    n_stations = n_distinct(entity_id),
+    .groups = "drop"
+  )
+```
+
+```{r Join LOOCV Metrics onto weather variables}
+
+# Create column for join
+rk_cv_metrics_join <- rk_cv_metrics %>%
+  mutate(
+    hour_ts = as.POSIXct(
+      paste(date, hour),
+      format = "%Y-%m-%d %H",
+      tz = "Europe/Berlin"
+    )
+  )
+
+# Join RMSE info and weather variables using timestamp
+cv_weather_combined <- rk_cv_metrics_join %>%
+  left_join(
+    weather_hourly_means,
+    by = c("hour_ts" = "hour")
+  )
+```
+
+```{r Plot RMSE against weather}
+
+# Selecting mean weather variables relevant for plotting
+weather_vars <- c(
+  "relativehumidity_mean", "dewpoint_mean",
+  "windspeed_mean", "solarradiation_mean",
+  "precipitation_mean", "pressure_mean"
+)
+
+# Creating a long table for all weather variables against RMSE
+df_long <- cv_weather_combined %>%
+  pivot_longer(cols = all_of(weather_vars), names_to = "variable", values_to = "value")
+
+# Remove NA rows from df
+df_long <- df_long[!is.na(df_long$value), ]
+
+# Add nice labels for subplots
+nice_names <- c(
+  dewpoint_mean           = "Dewpoint [°C]",
+  precipitation_mean      = "Precipitation [mm]",
+  pressure_mean           = "Pressure [hPa]",
+  relativehumidity_mean = "Relative Humidity [%]",
+  solarradiation_mean  = "Solar Radiation [W/m²]",
+  temperature_mean        = "Temperature [°C]",
+  windspeed_mean       = "Wind Speed [m/s]"
+)
+
+# Plot RMSE against weather variable values
+rel_rmse_weather <- ggplot(df_long, aes(x = value, y = rk_cv_rmse)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linewidth = 1) +
+  facet_wrap(~ variable, scales = "free_x", labeller = labeller(variable = nice_names)) +
+  theme_minimal(base_size = 14) +
+  labs(x = "Hourly Mean of Meteorological Variable", y = "RMSE [°C]") +
+  theme(
+    legend.position   = "top",
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
+  )
+
+rel_rmse_weather
+
+# Save the output plot
+# ggsave(
+#   filename = file.path("../plots_report/relationship_hourly_weather_rmse.png"),
+#   plot = rel_rmse_weather,
+#   width = 12, height = 8, dpi = 300
+# )
+```
+
+```{r Plot RMSE against weather and time}
+
+# Add plot showing diurnal pattern of weather variables with the RK LOOCV RMSE also added
+# Size of RMSE shows its quantity
+di_weather <- ggplot(df_long, aes(
+    x = hour,              # numeric hour (0–23)
+    y = value,             # weather variable
+    color = rk_cv_rmse,    # RMSE as color
+    size  = rk_cv_rmse
+)) +
+  geom_point(alpha = 0.7, size = 1.5) +
+  scale_color_viridis_c(option = "C", direction = -1) +
+  scale_x_continuous(
+    breaks = c(0, 6, 12, 18, 24),
+    limits = c(0, 24)
+  ) +
+  facet_wrap(~ variable, scales = "free_y", labeller = labeller(variable = nice_names)) +
+  theme_minimal(base_size = 14) +
+  labs(x = "Hour of the Day", y = "Hourly Mean of Meteorological Variable", color = "RMSE [°C]",
+       size  = "RMSE [°C]") +
+  guides(
+    color = guide_colorbar(
+      title.position = "top",
+      title.hjust    = 0.5,
+      barwidth  = unit(6, "cm"),
+      barheight = unit(0.5, "cm")
+    ),
+    size = guide_legend(order = 2)  # keep size legend separate
+  ) +
+  theme(
+    legend.position  = "top",
+    legend.box       = "horizontal",
+    legend.box.just  = "left",
+    legend.title = element_text(face = "bold"),
+    legend.text  = element_text(size = 11),
+    legend.key.height = unit(0.6, "lines"),
+    legend.key.width  = unit(1.3, "lines"),
+    legend.spacing.x  = unit(0.8, "lines"),
+    legend.margin     = margin(b = 6),
+    panel.grid.minor  = element_blank(),
+    strip.background  = element_rect(fill = "grey90", color = NA),
+    strip.text        = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
+  )
+
+di_weather
+
+# Save the output plot
+# ggsave(
+#   filename = file.path("../plots_report/hourly_weather_rk_loocv_rmse.png"),
+#   plot = di_weather,
+#   width = 12, height = 8, dpi = 300
+# )
+```
