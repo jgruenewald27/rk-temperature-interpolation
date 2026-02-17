@@ -1,0 +1,988 @@
+---
+title: "monthly_rk"
+output: html_document
+date: "2025-10-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Libraries}
+
+# Load Required Libraries
+
+# Spatial Data Handling & Processing
+library(sf)
+library(sp)
+library(terra)
+library(raster)
+library(stars)
+library(spdep)
+
+# Spatial Analysis & Interpolation
+library(gstat)
+library(randomForest)
+library(nlme)
+library(automap)
+library(mgcv)
+
+# Data Manipulation & Wrangling
+library(tidyverse)
+
+# Data Visualization
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(corrplot)
+
+# Mapping & Interactive Visualization
+library(tmap)
+
+# Additional
+library(lattice)
+library(car)
+```
+
+--------------------------------------------------------------------------------
+
+- Computes monthly mean temperatures (2023) per station and runs a monthly 
+RK loop (MLR trend + residual OK) with Moran’s I screening, variogram fitting, 
+and LOOCV.
+- Saves monthly performance summaries and variogram diagnostics.
+- Produces time-series plots of monthly R², LOOCV RMSE/MAE, and RK RMSE/MAE.
+
+--------------------------------------------------------------------------------
+
+```{r Load and preprocess data}
+
+# Complete data import and pre-processing of the temperature (Entire year 2023)
+
+# Read temperature data for the entire year of 2023
+temp <- sf::read_sf("../data/temp_HD/sensor_data_year_2023.geojson")
+
+# Removes rows where temp is NA
+temp <- temp %>% filter(!is.na(temperature))
+
+# sf-compatible CRS
+CRS_UTM32 <- sf::st_crs(32632)
+
+# sp-compatible CRS
+CRS_UTM32_sp <- sp::CRS("+proj=utm +zone=32 +datum=WGS84 +units=m +no_defs")
+
+# Reproject the data for Germany
+temp <- st_transform(temp, crs=CRS_UTM32)
+
+# Clean the data from outliers -> currently working with hard, manual breaks
+# Currently nothing is removed by this step because no measurements are above 40°C for the year 2023
+temp_clean <- temp %>% filter(temperature >= -35, temperature <= 40)
+
+# Drop all measurement stations which didn't collect data the entire year around
+temp_clean_station <- temp_clean %>%
+  mutate(dateobserved = as.POSIXct(dateobserved, tz = "Europe/Berlin")) %>%
+  filter(!entity_id %in% c(
+    "hd:DE_Heidelberg_69120_12:WeatherObserved",
+    "hd:DE_Heidelberg_69120_34:WeatherObserved",
+    "hd:DE_Heidelberg_69123_41:WeatherObserved",
+    "hd:DE_Gaiberg_69251_21:WeatherObserved",
+    "hd:DE_Heidelberg_46:WeatherObserved"
+  ))
+
+# Check if exactly 5 stations were dropped
+cat("Number of stations BEFORE cleaning: ",
+    length(unique(na.omit(temp_clean$entity_id))), "\n")
+
+cat("Number of stations AFTER cleaning:  ",
+    length(unique(na.omit(temp_clean_station$entity_id))), "\n")
+
+# Calculate monthly mean temp for the year 2023
+temp_monthly_mean_2023 <- temp_clean_station %>%
+  filter(year(dateobserved) == 2023) %>%
+  mutate(month = floor_date(dateobserved, "month")) %>%
+  group_by(entity_id, month) %>%
+  summarise(mm_temp = mean(temperature, na.rm = TRUE),
+            sd_temp   = sd(temperature, na.rm = TRUE),
+            n_obs     = n(), .groups   = "drop")
+```
+
+```{r Load and preprocess covariates}
+
+# Import of pre-processed temp data and import and pre-processing of covariates 
+
+# Import AOI and station coords
+hd_bounds <- sf::read_sf('../data/AOI/OSM_boundaries_HD.geojson')
+station_coords_sf <- sf::read_sf('../data/temp_HD/station_coords.gpkg')
+
+# Import the covariates
+dem <- terra::rast("../data/elevation/hd_elevation_4326.tif")
+tch <- terra::rast("../data/canopy_height/hd_canopy_height_4326.tif")
+ghs_bh <- terra::rast("../data/building_height/hd_ANBH_4326.tif")
+
+# Mask out all values which are assigned to water and have value 101
+# Not part of this area. But needs to be masked as well: 102 Snow/ice; 103 No data
+tch[tch == 101] <- NA
+
+# Reproject the data
+hd_bounds <- st_transform(hd_bounds, crs = CRS_UTM32)
+station_coords_sf <- st_transform(station_coords_sf, crs = CRS_UTM32)
+dem <- terra::project(dem, "EPSG:32632")
+tch <- terra::project(tch, "EPSG:32632")
+ghs_bh <- terra::project(ghs_bh, "EPSG:32632")
+
+# Check if any CRS mismatches
+if (!identical(crs(tch), crs(dem))) {
+  stop("CRS mismatch: Tree canopy height and DEM don't have the same CRS.")
+}
+if (!identical(crs(ghs_bh), crs(dem))) {
+  stop("CRS mismatch: Building height and DEM don't have the same CRS.")
+}
+cat("All covariates share the same CRS.\n")
+
+# Convert to SpatialPointsDataFrame
+station_coords <- as(station_coords_sf, "Spatial")
+
+# Ensure correct crs
+proj4string(station_coords) <- CRS_UTM32_sp
+
+# Create a Raster Stack for all covariate information
+cat("Checking input raster resolutions in metres:\n")
+cat(sprintf("DEM:    %.2f x %.2f\n", terra::res(dem)[1], terra::res(dem)[2]))
+cat(sprintf("TCH:    %.2f x %.2f\n", terra::res(tch)[1], terra::res(tch)[2]))
+cat(sprintf("GHS_BH: %.2f x %.2f\n\n", terra::res(ghs_bh)[1], terra::res(ghs_bh)[2]))
+
+# Align canopy height and building height to DEM resolution and extent
+tch_aligned    <- terra::resample(tch, dem, method = "bilinear")
+ghs_bh_aligned <- terra::resample(ghs_bh, dem, method = "near")
+
+# Check alignment after resampling
+if (!terra::compareGeom(dem, tch_aligned, ghs_bh_aligned, stopOnError = FALSE)) {
+  stop("Covariate rasters are not perfectly aligned after resampling. Check extent/resolution/CRS.")
+}
+
+# Combine layers into a single SpatRaster stack
+env_stack <- c(dem, tch_aligned, ghs_bh_aligned)
+
+# Rename layers for clarity
+names(env_stack) <- c("elevation", "canopy_height", "building_height")
+
+# Code to include lat and lon information in raster stack
+
+# Also add lat and lon to the raster stack
+# Create coordinate rasters
+lon <- terra::xFromCell(env_stack, 1:ncell(env_stack))
+lat <- terra::yFromCell(env_stack, 1:ncell(env_stack))
+
+# Convert to raster layers
+lon_raster <- dem
+lat_raster <- dem
+values(lon_raster) <- lon
+values(lat_raster) <- lat
+names(lon_raster) <- "lon"
+names(lat_raster) <- "lat"
+
+# Stack the three raster layers
+grids <- c(env_stack, lon_raster, lat_raster)
+
+# Preparation of grid as a covariate for running RK
+grids_ras <- stack(grids)
+
+# Convert to SpatialGridDataFrame
+grids_sp <- as(grids_ras, "SpatialGridDataFrame")
+
+# Ensure correct crs
+proj4string(grids_sp) <- CRS_UTM32_sp
+
+# Check if output grid has NAs
+cat("grids_sp has NA values:", anyNA(grids_sp@data), "\n")
+
+# Print number of NAs per variable
+colSums(is.na(grids_sp@data))
+```
+
+--------------------------------------------------------------------------------
+
+```{r Create output folder}
+
+# Create output dirs
+output_dir <- "../Monthly_ANBH_RK_2023"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+variogram_dir <- file.path(output_dir, "variogram_fits")
+cv_dir        <- file.path(output_dir, "cross_validation")
+rk_dir        <- file.path(output_dir, "rk_predictions")
+
+dir.create(variogram_dir, showWarnings = FALSE)
+dir.create(cv_dir, showWarnings = FALSE)
+dir.create(rk_dir, showWarnings = FALSE)
+
+# Datetime helpers
+tz_berlin <- "Europe/Berlin"
+
+ts_to_posix <- function(ch) {
+  if (inherits(ch, "POSIXt")) return(ch)
+  if (is.numeric(ch)) return(as.POSIXct(ch * 3600, origin = "1970-01-01", tz = tz_berlin))
+  as.POSIXct(ch, format = "%Y-%m-%d %H:%M:%S", tz = tz_berlin)
+}
+
+nice_dt     <- function(x) format(x, "%Y-%m-%d %H:00 %Z")                                   
+file_dt     <- function(x) format(x, "%Y-%m-%d_%H00")                                       
+```
+
+```{r Main loop with improved variogram modelling}
+
+## ------------------------------------------------
+## Prep: timestamps and static objects
+## ------------------------------------------------
+
+# Get unique time stamps
+timestamps <- unique(temp_monthly_mean_2023$month)[1:12]  
+set.seed(12345)
+
+cat("Looping from:", min(timestamps), "to", max(timestamps), "\n")
+
+# Counters and progress bar
+total     <- length(timestamps)
+completed <- 0L
+skipped   <- 0L
+pb <- txtProgressBar(min = 0, max = total, style = 3)
+
+cat(sprintf("Processing %d timestamps…\n", total))
+
+# Convert prediction grid once
+r_brick    <- raster::brick(grids_sp)
+grid_terra <- terra::rast(r_brick)
+terra::crs(grid_terra) <- "EPSG:32632"
+
+## Containers
+lm_metrics_all    <- data.frame()
+cv_metrics_all    <- data.frame()
+rk_cv_metrics_all <- data.frame()
+rk_metrics_all    <- data.frame()
+variogram_metrics_all <- data.frame()
+
+## ------------------------------------------------
+## Main loop
+## ------------------------------------------------
+for (i in seq_along(timestamps)) {
+
+  ts       <- timestamps[i]
+  dt_local <- ts_to_posix(ts)
+  dt_lab   <- nice_dt(dt_local)
+  dt_file  <- file_dt(dt_local)
+
+  cat(sprintf("\n[%d/%d] Processing: %s\n", i, total, dt_lab))
+
+  ## ------------------------------------------------
+  ## STEP 1: Filter hourly data & extract covariates
+  ## ------------------------------------------------
+  
+  # Select temperature data for the current hour
+  sel_temp_hm <- temp_monthly_mean_2023 %>%
+    filter(month == ts)
+
+  # Skip if fewer than 25 data points for current hour
+  if (nrow(sel_temp_hm) < 21) {
+    skipped <- skipped + 1L
+    cat("  → skipped (n < 20)\n")
+    next
+  }
+
+  sel_temp_hm <- sel_temp_hm %>%
+      mutate(across(everything(), identity))  # ensures sf stays sf
+  
+  extracted_vals <- terra::extract(grid_terra, sel_temp_hm)[, -1, drop = FALSE]
+  
+  # Drop duplicates by lon + lat (keep first)
+  extracted_vals <- extracted_vals |>
+  dplyr::distinct(lon, lat, .keep_all = TRUE)
+  
+  # Bind safely
+  temp_shm.ex <- dplyr::bind_cols(sel_temp_hm, extracted_vals)
+
+  ## ------------------------------------------------
+  ## STEP 2: Fit MLR
+  ## ------------------------------------------------
+
+  lm.temp_shm <- lm(mm_temp ~ elevation + canopy_height + building_height,
+                    data = temp_shm.ex)
+  summary_lm  <- summary(lm.temp_shm)
+
+  # Calculate fitted values and residuals
+  pred  <- predict(lm.temp_shm, temp_shm.ex)
+  resid <- temp_shm.ex$mm_temp - pred
+
+  # Store regression metrics
+  lm_metrics_all <- rbind(lm_metrics_all, data.frame(
+    timestamp      = ts,
+    r_squared      = summary_lm$r.squared,
+    adj_r_squared  = summary_lm$adj.r.squared,
+    f_statistic    = summary_lm$fstatistic[1],
+    f_pvalue       = pf(summary_lm$fstatistic[1],
+                        summary_lm$fstatistic[2],
+                        summary_lm$fstatistic[3],
+                        lower.tail = FALSE),
+    residual_se    = summary_lm$sigma,
+    rmse           = sqrt(mean(resid^2)),
+    mae            = mean(abs(resid)),
+    AIC            = AIC(lm.temp_shm),
+    BIC            = BIC(lm.temp_shm)
+  ))
+
+  # Attach residuals to dataset and convert to sf for spatial operations
+  temp_shm.ex$residuals <- resid
+  temp_shm.sf <- st_as_sf(temp_shm.ex) |> st_cast("POINT")
+  temp_shm.sf <- st_transform(temp_shm.sf, CRS_UTM32)
+  
+  ## ------------------------------------------------
+  ## STEP 3: Moran’s I
+  ## ------------------------------------------------
+
+  # Extract coordinates
+  coords <- sf::st_coordinates(temp_shm.sf)
+
+  # 4-nearest-neighbour weights
+  nb <- spdep::knn2nb(spdep::knearneigh(coords, k = 4)) # JUSTIFICATION!
+  lw <- spdep::nb2listw(nb, style = "W")
+  
+  # Monte Carlo Moran’s I
+  moran_res <- spdep::moran.mc(temp_shm.sf$residuals, lw, nsim = 999)
+
+  # Extract statistic + p-value
+  moran_I <- moran_res$statistic
+  moran_p <- moran_res$p.value
+
+  cat("  Moran’s I =", round(moran_I, 4), "p =", round(moran_p, 4), "\n")
+
+  # Distance matrix
+  dists   <- sp::spDists(coords)
+  # Max distance
+  maxdist <- max(dists)
+  # Variogram cutoff
+  cutoff  <- 4000
+  # Variogram cutoff
+  width   <- cutoff / 10
+
+  ## ------------------------------------------------
+  ## Step 4a — No spatial structure: Pure nugget model is assumed
+  ## ------------------------------------------------
+
+    if (moran_p >= 0.05) {
+      
+      cat("  → No significant spatial autocorrelation: fitting practical nugget variogram.\n")
+    
+      # Total variance of residuals
+      sill_resid <- var(temp_shm.sf$residuals, na.rm = TRUE)
+    
+      # Use 95% nugget, 5% partial sill
+      nug0   <- 0.95 * sill_resid
+      psill0 <- 0.05 * sill_resid
+      
+      # Give a small but non-zero range (avoids kriging degeneracy)
+      small_range <- 2000    # e.g., ~5% of spatial extent
+    
+      # Define practical nugget model
+      rvgm.temp <- vgm(
+        psill = psill0,
+        model = "Exp",
+        range = small_range,
+        nugget = nug0
+      )
+    
+      # Empirical variogram (for plotting)
+      rv.temp <- variogram(
+        residuals ~ 1, temp_shm.sf,
+        cutoff = cutoff,
+        width  = width,
+        cressie = TRUE
+      )
+    
+    } else {
+
+    ## ------------------------------------------------
+    ## Case 4b — Spatial structure: Fit structured variogram
+    ## ------------------------------------------------
+
+    cat("  → Significant spatial autocorrelation: fitting structured variogram.\n")
+
+    rv.temp <- variogram(
+      residuals ~ 1, temp_shm.sf,
+      cutoff  = cutoff,
+      width   = width,
+      cressie = TRUE # NEEDS TO BE JUSTIFIED
+    )
+
+    sill0   <- var(temp_shm.sf$residuals, na.rm = TRUE)
+    nug0    <- 0.1 * sill0
+    psill0  <- 0.9 * sill0
+    range0  <- 4000
+    
+    ## Directional variograms for anisotropy detection
+    dirs <- c(0, 45, 90, 135)
+    
+    rv.dir <- lapply(dirs, function(az) {
+      variogram(
+        residuals ~ 1, temp_shm.sf,
+        alpha = az,
+        cutoff = cutoff,
+        width  = width,
+        cressie = TRUE
+      )
+    })
+    
+    # Estimate directional ranges: distance at ~95% of sill
+    dir_ranges <- sapply(rv.dir, function(v) {
+      sill_est <- max(v$gamma, na.rm = TRUE)
+      idx <- which(v$gamma > 0.95 * sill_est)[1]
+      if (is.na(idx)) Inf else v$dist[idx]
+    })
+    
+    anis_ratio <- max(dir_ranges) / min(dir_ranges)
+    anis_dir   <- dirs[which.min(dir_ranges)]
+    
+    cat(sprintf(
+      "    Anisotropy summary for %s:\n      → Ratio = %.3f\n      → Principal direction = %d°\n      → Directional ranges = %s\n",
+      dt_lab,
+      anis_ratio,
+      anis_dir,
+      paste(round(dir_ranges, 1), collapse = ", ")
+    ))
+
+    if (is.infinite(anis_ratio)) anis_ratio <- 1  # prevents degeneracies
+    
+    cat(sprintf("    Directional ranges: %s\n", 
+                paste(round(dir_ranges), collapse = ", ")))
+    cat(sprintf("    Anisotropy ratio ≈ %.2f | principal direction = %d°\n",
+                anis_ratio, anis_dir))
+    
+    anis_threshold <- 1.5   # typical rule-of-thumb for geometric anisotropy
+
+    if (anis_ratio > anis_threshold) {
+      
+      cat("    → Anisotropy detected — fitting anisotropic variogram models.\n")
+    
+      cand_models <- list(
+        vgm(psill0, "Exp", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio)),
+        vgm(psill0, "Sph", min(dir_ranges), nug0, anis = c(anis_dir, anis_ratio))
+      )
+      model_labels <- c("Exp (anis)", "Sph (anis)")
+    
+    } else {
+    
+      cat("    → No strong anisotropy — using isotropic candidate models.\n")
+    
+      cand_models <- list(
+        vgm(psill0, "Exp", range0, nug0),
+        vgm(psill0, "Sph", range0, nug0)
+      )
+      model_labels <- c("Exp", "Sph")
+    }
+
+    cat("    Trying models: ", paste(model_labels, collapse = ", "), "\n")
+
+    fit_list <- lapply(cand_models, function(m) {
+      try(fit.variogram(rv.temp, m, fit.method = 2), silent = TRUE)
+    })
+    
+    # Retrieve SSErr
+    sse_vals <- sapply(fit_list, function(m) {
+      if (inherits(m, "try-error")) return(Inf)
+      val <- attr(m, "SSErr")
+      if (is.null(val) || is.na(val)) Inf else val
+    })
+    
+    best_idx <- which.min(sse_vals)
+    rvgm.temp <- fit_list[[best_idx]]
+    
+    cat(sprintf("    → Selected model: %s | SSErr = %.3f\n",
+                model_labels[best_idx], sse_vals[best_idx]))
+    
+    # Ensure directional ranges are formatted
+    dir_range_str <- paste(round(dir_ranges, 3), collapse = "; ")
+    
+    variogram_metrics_all <- rbind(
+      variogram_metrics_all,
+      data.frame(
+        timestamp         = ts,
+        datetime_label    = dt_lab,
+        model_used        = model_labels[best_idx],
+        nugget            = rvgm.temp$psill[1],
+        partial_sill      = rvgm.temp$psill[2],
+        sill_total        = sum(rvgm.temp$psill),
+        range             = rvgm.temp$range[2],
+        anisotropy_ratio  = anis_ratio,
+        anisotropy_dir    = anis_dir,
+        dir_ranges        = dir_range_str,
+        SSErr             = sse_vals[best_idx],
+        moran_I           = moran_I,
+        moran_p           = moran_p,
+        stringsAsFactors = FALSE
+      )
+    )
+
+    sill_resid <- var(temp_shm.sf$residuals, na.rm = TRUE)
+    fallback.model <- vgm(
+      psill  = 0.05 * sill_resid,
+      model  = "Exp",
+      range  = cutoff / 20,
+      nugget = 0.95 * sill_resid
+    )
+    
+    valid_model <- TRUE
+    
+    if (inherits(rvgm.temp, "try-error")) {
+      valid_model <- FALSE
+      cat("    WARNING: Structured variogram fit failed (try-error).\n")
+    }
+    
+    if (valid_model) {
+      model_range <- rvgm.temp$range[2]
+      model_psill <- rvgm.temp$psill[2]
+      
+      bad_model <-
+        !is.finite(model_range) ||
+        !is.finite(model_psill) ||
+        model_range <= 0 ||
+        model_psill < 0
+      
+      if (bad_model) {
+        valid_model <- FALSE
+        cat("    WARNING: Structured variogram fit invalid (NA/zero/negative structured parameters).\n")
+      }
+    }
+    
+    if (!valid_model) {
+      cat("    → Using fallback *practical nugget* model.\n")
+      rvgm.temp <- fallback.model
+    }
+  }
+  
+  ## ------------------------------------------------
+  ## STEP 5a: CV of residual kriging
+  ## ------------------------------------------------
+
+  cv_resid <- krige.cv(
+    residuals ~ 1,
+    locations = temp_shm.sf,
+    model     = rvgm.temp,
+    nfold     = nrow(temp_shm.sf),
+    nmax      = nrow(temp_shm.sf) - 1
+  )
+
+  # Compute CV performance metrics
+  cv_rmse <- sqrt(mean(cv_resid$residual^2, na.rm = TRUE))
+  cv_mae  <- mean(abs(cv_resid$residual), na.rm = TRUE)
+  cv_me   <- mean(cv_resid$residual,     na.rm = TRUE)
+
+  # Store CV results
+  cv_metrics_all <- rbind(cv_metrics_all, data.frame(
+    timestamp = ts,
+    moran_I   = moran_I,
+    moran_p   = moran_p,
+    cv_rmse   = cv_rmse,
+    cv_mae    = cv_mae,
+    cv_bias   = cv_me
+  ))
+
+  ## ------------------------------------------------
+  ## STEP 4b: LOOCV for full RK
+  ## ------------------------------------------------
+
+  cv_rk <- krige.cv(
+    formula   = mm_temp ~ elevation + canopy_height + building_height,
+    locations = temp_shm.sf,
+    model     = rvgm.temp,
+    nfold     = nrow(temp_shm.sf),
+    nmax      = nrow(temp_shm.sf) - 1
+  )
+
+  rk_cv_rmse <- sqrt(mean(cv_rk$residual^2, na.rm = TRUE))
+  rk_cv_mae  <- mean(abs(cv_rk$residual), na.rm = TRUE)
+  rk_cv_bias <- mean(cv_rk$residual,     na.rm = TRUE)
+
+  # Store RK CV results
+  rk_cv_metrics_all <- rbind(rk_cv_metrics_all, data.frame(
+    timestamp   = ts,
+    moran_I     = moran_I,
+    moran_p     = moran_p,
+    rk_cv_rmse  = rk_cv_rmse,
+    rk_cv_mae   = rk_cv_mae,
+    rk_cv_bias  = rk_cv_bias
+  ))
+
+  ## ------------------------------------------------
+  ## STEP 6: Regression–Kriging prediction
+  ## ------------------------------------------------
+
+  # Define kriging model using fitted variogram
+  g.resid <- gstat(
+    id = "residuals",
+    formula = residuals ~ 1,
+    data = temp_shm.sf,
+    nmax = nrow(temp_shm.sf) - 1,
+    model = rvgm.temp
+  )
+
+  # Identify complete cases for prediction
+  covars <- c("elevation", "canopy_height", "building_height")
+  ok_idx <- complete.cases(grids_sp@data[, covars])
+  
+  cat("Usable grid cells (no NA in covariates):", sum(ok_idx), "of", nrow(grids_sp), "\n")
+  
+  # Create point set for prediction (does NOT break grid!)
+  pred_points <- as(grids_sp[ok_idx, ], "SpatialPointsDataFrame")
+  
+  # Predict LM trend and OK residuals
+  locTEMP.reg <- predict(lm.temp_shm, newdata = pred_points)
+  locTEMP     <- predict(g.resid, pred_points)
+  
+  # Fallback if kriging output wrong
+  
+  # Extract predicted residuals and variances
+  pred_resid  <- locTEMP$residuals.pred
+  pred_var    <- locTEMP$residuals.var
+  
+  total_cells <- length(pred_resid)
+  
+  # Condition: kriging failed if ANY of these are true
+  kriging_invalid <- (
+      any(!is.finite(pred_resid)) ||               # Inf / NaN predictions
+      any(!is.finite(pred_var))   ||               # Inf / NaN variances
+      sum(!is.finite(pred_var)) == total_cells ||  # ALL NA/Inf → complete failure
+      sum(!is.finite(pred_resid)) == total_cells   # ALL NA/Inf predictions
+  )
+  
+  if (kriging_invalid) {
+      cat("    WARNING: kriging output invalid → using fallback variogram.\n")
+  
+      # Refit using fallback model
+      rvgm.temp <- fallback.model
+  
+      # Rebuild gstat object using fallback
+      g.resid <- gstat(
+          id = "residuals",
+          formula = residuals ~ 1,
+          data = temp_shm.sf,
+          nmax = nrow(temp_shm.sf) - 1,
+          model = rvgm.temp
+      )
+  
+      # Re-run prediction with fallback model
+      locTEMP <- predict(g.resid, pred_points)
+  
+      pred_resid <- locTEMP$residuals.pred
+      pred_var   <- locTEMP$residuals.var
+  
+      # Re-check validity to prevent silent failure
+      if (any(!is.finite(pred_resid)) || any(!is.finite(pred_var))) {
+          stop("FATAL: Fallback variogram STILL produced invalid kriging output.")
+      }
+  }
+  
+  # Save variogram plot after fallback to also include these fits
+  file_varfit <- file.path(variogram_dir, paste0(dt_file, "_variogram_fit.png"))
+  png(file_varfit, width = 8, height = 6, units = "in", res = 300)
+  print(
+    plot(rv.temp, rvgm.temp, main = paste0("Residual Variogram Fit\n", dt_lab),
+         pch = 3, col = "black"))
+  dev.off()
+  
+  # Prepare storage in the full grid
+  grids_sp$rk_pred <- NA
+  grids_sp$rk_var  <- NA
+  
+  # Insert predictions back into the original grid structure
+  grids_sp$rk_pred[ok_idx] <- locTEMP.reg + locTEMP$residuals.pred
+  grids_sp$rk_var[ok_idx]  <- locTEMP$residuals.var
+  
+  # For export later
+  full_pred_grid <- grids_sp
+
+  # Export predicitons as .tif
+  rk_raster <- terra::rast(grids_sp["rk_pred"])
+  terra::crs(rk_raster) <- "EPSG:32632"
+  rk_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_prediction.tif"))
+  terra::writeRaster(rk_raster, rk_file_tif, overwrite = TRUE)
+  
+  # Export kriging variance as .tif
+  rk_var_raster <- terra::rast(grids_sp["rk_var"])
+  terra::crs(rk_var_raster) <- "EPSG:32632"
+  rk_var_file_tif <- file.path(rk_dir, paste0(dt_file, "_rk_variance.tif"))
+  terra::writeRaster(rk_var_raster, rk_var_file_tif, overwrite = TRUE)
+  
+  # Add tests
+  cat("rk_pred range: ", paste(range(grids_sp$rk_pred, na.rm = TRUE), collapse = " – "), "\n")
+  cat("rk_pred NA count:", sum(!is.finite(grids_sp$rk_pred)), "\n")
+  
+  cat("rk_var  range: ", paste(range(grids_sp$rk_var, na.rm = TRUE), collapse = " – "), "\n")
+  cat("rk_var NA count:", sum(!is.finite(grids_sp$rk_var)), "\n")
+  
+  # Plot RK prediction map
+  rk_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_prediction_map", ".png"))   
+  png(rk_file_img, width = 8, height = 6, units = "in", res = 300)
+  print(
+    spplot(grids_sp, "rk_pred",
+           main = paste("Regression Kriging Prediction [°C]\n", dt_lab),   
+           sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
+  dev.off()
+  
+  # Plot RK variance map
+  rk_var_file_img <- file.path(rk_dir, paste0(dt_file, "_rk_variance_map.png"))
+  png(rk_var_file_img, width = 8, height = 6, units = "in", res = 300)
+  print(
+    spplot(grids_sp, "rk_var",
+      main = paste("Regression-Kriging Prediction Variance\n", dt_lab),
+      sp.layout = list("sp.points", station_coords, pch = 20, col = "white")))
+  dev.off()
+
+  ## ------------------------------------------------
+  ## STEP 7: Evaluate RK predictions at station points
+  ## ------------------------------------------------
+
+  # Match station coordinates with observed stations only
+  obs_coords   <- sf::st_coordinates(temp_shm.sf)
+  
+  # Convert to SpatialPoints object with same CRS as prediction grid
+  obs_stations <- SpatialPoints(obs_coords, proj4string = CRS_UTM32_sp)
+  
+  # Extract only at observed station locations
+  rk_at_obs    <- sp::over(obs_stations, grids_sp)
+  
+  # Combine predictions with observations
+  rk_eval <- cbind(rk_at_obs, obs = temp_shm.sf$mm_temp)
+  
+  # Calculate prediction error
+  rk_eval$residual <- rk_eval$obs - rk_eval$rk_pred
+
+  # Compute RK metrics
+  rk_rmse <- sqrt(mean(rk_eval$residual^2, na.rm = TRUE))
+  rk_mae  <- mean(abs(rk_eval$residual), na.rm = TRUE)
+  rk_bias <- mean(rk_eval$residual,     na.rm = TRUE)
+
+  # Append RK metrics
+  rk_metrics_all <- rbind(rk_metrics_all, data.frame(
+    timestamp = ts,
+    rk_rmse   = rk_rmse,
+    rk_mae    = rk_mae,
+    rk_bias   = rk_bias
+  ))
+
+  ## Progress bar update
+  completed <- completed + 1L
+  setTxtProgressBar(pb, completed)
+  cat(sprintf("  done. Completed: %d/%d (skipped: %d)\n",
+              completed, total, skipped))
+}
+
+# ------------------------------------------------
+# STEP 8: Finalize and save results
+# ------------------------------------------------
+
+close(pb)
+cat(sprintf("\nFinished. Completed: %d/%d | Skipped: %d\n",
+            completed, total, skipped))
+
+# Write variogram summary file
+out_file <- file.path(output_dir, "variogram_summary.csv")
+write.csv(variogram_metrics_all, out_file, row.names = FALSE)
+cat("\nSaved variogram diagnostics to:\n  ", out_file, "\n")
+
+# Save MLR metrics
+metrics_file <- file.path(output_dir, "mlr_model_performance_summary.csv")
+if (exists("lm_metrics_all")) {                                     
+  write.csv(lm_metrics_all, metrics_file, row.names = FALSE)
+}
+
+# Save CV metrics
+cv_file <- file.path(output_dir, "residuals_loocv_metrics.csv")
+if (exists("cv_metrics_all")) {                                     
+  write.csv(cv_metrics_all, cv_file, row.names = FALSE)
+}
+
+# Save RK LOOCV metrics
+rk_cv_file <- file.path(output_dir, "rk_loocv_metrics.csv")
+if (exists("rk_cv_metrics_all")) {
+  write.csv(rk_cv_metrics_all, rk_cv_file, row.names = FALSE)
+}
+
+# Save RK metrics
+rk_file <- file.path(output_dir, "rk_metrics.csv")
+if (exists("rk_metrics_all")) {                                   
+  write.csv(rk_metrics_all, rk_file, row.names = FALSE)
+}
+```
+
+------------------------------------------------------------------------
+
+Plots to analyse model performance metrices
+
+```{r Analyse LOOCV metrics}
+
+# Read LOOCV
+lm_metrics <- read.csv("../Monthly_ANBH_RK_2023/mlr_model_performance_summary.csv",
+                       stringsAsFactors = FALSE)
+# Read the cv metrics
+rk_cv_metrics <- read.csv("../Monthly_ANBH_RK_2023/rk_loocv_metrics.csv",
+                       stringsAsFactors = FALSE)
+
+# Read RK metrics
+rk_metrics <- read.csv("../Monthly_ANBH_RK_2023/rk_metrics.csv",
+                       stringsAsFactors = FALSE)
+
+# Summer shading (JJA) – reuse if already defined
+if (!exists("summer_start") || !exists("summer_end")) {
+  yr <- year(min(lm_metrics_long$month_date, na.rm = TRUE))
+  summer_start <- as.Date(sprintf("%d-06-01", yr))
+  summer_end   <- as.Date(sprintf("%d-08-31", yr))
+}
+
+# Create month_date (use month column; fallback to timestamp if needed)
+lm_metrics <- lm_metrics %>%
+  mutate(
+    month_date =
+      if ("month" %in% names(.)) {
+        as.Date(paste0(month, "-01"))
+      } else {
+        as.Date(format(as.POSIXct(timestamp, origin = "1970-01-01", tz = "Europe/Berlin"),
+                       "%Y-%m-01"))
+      })
+
+# Long format for R² metrics
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(
+    cols = c(r_squared, adj_r_squared),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  arrange(month_date)
+
+# Prepare monthly date and tidy format
+rk_cv_metrics_long <- rk_cv_metrics %>%
+  mutate(
+    month_date = as.Date(paste0(timestamp, "-01")),       # e.g. "2023-01" -> Date
+    .keep = "all"
+  ) %>%
+  pivot_longer(
+    cols = c(rk_cv_rmse, rk_cv_mae),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  arrange(month_date)
+```
+
+```{r Plot LOOCV monthly mean}
+
+# Monthly Evaluation of the LOOCV
+p_cv <- ggplot(rk_cv_metrics_long,
+               aes(x = month_date, y = value, color = metric, group = metric)) +
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.8) +
+  scale_color_manual(
+    values = c("rk_cv_rmse" = "#041014", "rk_cv_mae" = "#be4d25"),
+    labels = c("rk_cv_rmse" = "Root Mean Square Error (RMSE)",
+               "rk_cv_mae"  = "Mean Absolute Error (MAE)")
+  ) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
+  labs(x = "Month", y = "Error Metric [°C]", color = "Metrics") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "top",
+    legend.text  = element_text(size = 11),
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y  = element_text(margin = margin(r = 15))
+  )
+
+p_cv
+
+# Save plot
+ggsave("../plots_report/loocv_metrics_monthly_rmse_mae.png", plot = p_cv, width = 10, height = 6, dpi = 300)
+```
+
+```{r Plot RK metrics monthly mean}
+
+# Prepare monthly date and tidy format
+rk_metrics_long <- rk_metrics %>%
+  mutate(
+    month_date = as.Date(paste0(month, "-01")),  # "2023-01" -> Date
+    .keep = "all"
+  ) %>%
+  pivot_longer(
+    cols = c(rk_rmse, rk_mae),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  arrange(month_date)
+
+# Monthly Evaluation of the RK Metrics (RMSE & MAE)
+p_rk <- ggplot(rk_metrics_long,
+               aes(x = month_date, y = value, color = metric, group = metric)) +
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.8) +
+  geom_hline(
+    aes(yintercept = 0, linetype = "Perfect Prediction (Error = 0)")
+  ) +
+  scale_color_manual(
+    values = c("rk_rmse" = "#0072B2", "rk_mae" = "#D55E00"),
+    labels = c("rk_rmse" = "Root Mean Square Error (RMSE)",
+               "rk_mae"  = "Mean Absolute Error (MAE)")
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Prediction (Error = 0)" = "dotted")
+  ) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
+  labs(x = "Month", y = "Error Metric [°C]", color = "Metrics") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+p_rk
+
+# Save plot
+ggsave("../plots/rk_metrics_monthly_rmse_mae.png", plot = p_rk, width = 10, height = 6, dpi = 300)
+```
+
+```{r Plot MLR metrics monthly mean}
+
+# Monthly MLR performance (R² & Adjusted R²)
+p_lm <- ggplot(lm_metrics_long,
+               aes(x = month_date, y = value, color = metric, group = metric)) +
+  annotate("rect", xmin = summer_start, xmax = summer_end,
+           ymin = -Inf, ymax = Inf, alpha = 0.06, fill = "grey50") +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.8) +
+  geom_hline(
+    aes(yintercept = 1, linetype = "Perfect Fit (R² = 1)")
+  ) +
+  scale_color_manual(
+    values = c("r_squared" = "#0072B2", "adj_r_squared" = "#D55E00"),
+    labels = c("r_squared" = expression(R^2),
+               "adj_r_squared" = expression(Adjusted~R^2))
+  ) +
+  scale_linetype_manual(
+    name   = "",
+    values = c("Perfect Fit (R² = 1)" = "dotted")
+  ) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%Y-%m") +
+  scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0.01, 0.05))) +
+  labs(x = "Month", y = "Metric Value", color = "Metrics") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x      = element_text(angle = 45, hjust = 1)
+  )
+
+p_lm
+
+# Save plot
+# ggsave("../plots_report/mlr_metrics_monthly_r2.png", plot = p_lm, width = 10, height = 6, dpi = 300)
+```
