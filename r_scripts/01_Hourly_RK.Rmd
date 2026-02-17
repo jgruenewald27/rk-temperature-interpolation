@@ -1,5 +1,5 @@
 ---
-title: "01_Hourly_RK"
+title: "Hourly_RK"
 author: "Johannes Gruenewald"
 date: "2024-11-26"
 output: html_document
@@ -48,6 +48,14 @@ library(tmap)
 library(lattice)
 library(car)
 ```
+
+--------------------------------------------------------------------------------
+
+This script performs hourly RK for temperature. An MLR model (elevation, 
+canopy height, building height) is fitted per hour, residual spatial 
+autocorrelation is tested (Moran’s I), residual variograms are fitted, and 
+residuals are kriged using OK and added to the trend to produce hourly 
+prediction and variance rasters, including LOOCV diagnostics.
 
 --------------------------------------------------------------------------------
 
