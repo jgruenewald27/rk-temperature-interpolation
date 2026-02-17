@@ -1,0 +1,445 @@
+---
+title: "hourly_mlr_results"
+output: html_document
+date: "2025-12-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Load Required Packages}
+
+# Core data manipulation
+library(tidyverse)
+library(lubridate)
+
+# Plotting
+library(ggplot2)
+library(ggforce)
+library(scales)
+
+# Spatial data
+library(terra)
+library(spdep)
+
+# RMarkdown utilities
+library(knitr)
+library(rmarkdown)
+
+library(sf)
+library(spdep)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(lubridate)
+library(igraph)
+
+```
+
+--------------------------------------------------------------------------------
+
+This script create plots for the MLR results and aims to answer RQ 1 and 2.
+- It loads hourly MLR performance, coefficients (z-standardised), and residuals 
+for 01–12 July 2023.
+- Visualises hourly model fit (R²) and covariate importance (LMG) across days.
+- Computes and evaluates Moran’s I (kNN-based) on MLR residuals for each hour.
+- Plots robust covariate significance over time, highlighting hours with 
+significant spatial autocorrelation.
+
+--------------------------------------------------------------------------------
+
+```{r Analyse MLR metrics}
+
+# Read CSV with MLR metrics
+lm_metrics <- read.csv("../MLR_ANBH_07_2023_12days/lm_metrics/lm_model_performance_summary.csv")
+
+lm_metrics <- lm_metrics %>%
+    mutate(
+      timestamp = if_else(nchar(timestamp) == 10, 
+                          paste0(timestamp, " 00:00:00"), timestamp),
+      timestamp = as.POSIXct(timestamp, 
+                             format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+      date = as.Date(timestamp, tz = "Europe/Berlin"),
+      hour = lubridate::hour(timestamp)
+  )
+
+# Reshape to long format
+lm_metrics_long <- lm_metrics %>%
+  pivot_longer(cols = c(r_squared, adj_r_squared),
+               names_to = "metric",
+               values_to = "value")
+```
+
+```{r}
+# Read and prepare data
+coef_all <- read.csv("../MLR_ANBH_07_2023_12days/lm_metrics_z/lm_z_coefficients_by_timestamp.csv")
+fit <- read.csv("../MLR_ANBH_07_2023_12days/lm_metrics_z/lm_z_model_performance_summary.csv")
+
+fit <- fit %>%
+  mutate(
+    timestamp = if_else(
+      nchar(timestamp) == 10, paste0(timestamp, " 00:00:00"), timestamp
+    ),
+    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    month = month(timestamp),
+    year = year(timestamp)
+  )
+
+coef_all <- coef_all %>%
+  mutate(
+    timestamp = if_else(
+      nchar(timestamp) == 10,
+      paste0(timestamp, " 00:00:00"),
+      timestamp
+    ),
+    timestamp = as.POSIXct(timestamp, format = "%Y-%m-%d %H:%M:%S", tz = "Europe/Berlin"),
+    date = as.Date(format(timestamp, tz = "Europe/Berlin")),
+    hour  = hour(timestamp),
+    month = month(timestamp),
+    year  = year(timestamp)
+  ) %>%
+  left_join(fit %>% dplyr::select(timestamp, r_squared), by = "timestamp")
+
+# Determine pagination structure
+days_per_page <- 12
+n_pages <- ceiling(length(unique(coef_all$date)) / days_per_page)
+
+# Paginated plotting loop
+p_cov <- ggplot(coef_all, aes(x = hour)) +
+  geom_area(aes(y = lmg, fill = term), position = "fill", alpha = 0.85) +
+  geom_line(aes(y = r_squared, color = "Model R²"), linewidth = 0.9) +
+  ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4) +
+  scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+  scale_y_continuous(
+    breaks = c(0, 0.25, 0.50, 0.75, 1.00),
+    labels = scales::percent_format(accuracy = 1),
+    sec.axis = sec_axis(~ ., name = "Model R²")
+  ) +
+  theme(
+    panel.grid = element_blank(),
+    panel.grid.major.y = element_line(color = "grey85")
+  ) +
+  scale_fill_manual(
+    name = "Covariates (z-standardised)",
+    values = c(
+      "building_height_z" = "darkorange3",
+      "canopy_height_z"   = "darkolivegreen",
+      "elevation_z"       = "burlywood2"),
+    labels = c(
+      "building_height_z" = "Building Height",
+      "canopy_height_z"   = "Canopy Height",
+      "elevation_z"       = "Elevation")
+    ) +
+  scale_color_manual(
+    name = "",  # we'll merge this with the fill legend
+    values = c("Model R²" = "black"),
+    guide = guide_legend(override.aes = list(linetype = 1, fill = NA))
+  ) +
+  guides(
+    fill = guide_legend(order = 1),
+    color = guide_legend(order = 2)
+  ) +
+  labs(x = "Hour of the Day", y = "Share of R² (LMG, Sum = 1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position  = "bottom",
+    legend.title     = element_text(face = "bold"),
+    legend.key.width = unit(2, "lines"),
+    strip.text       = element_text(face = "bold", size = 12),
+    panel.spacing    = unit(0.8, "lines"),
+    plot.title       = element_text(face = "bold", size = 20, hjust = 0.5, 
+                                      margin = margin(t = 10, b = 10)),
+    plot.subtitle    = element_text(size = 12, hjust = 0.5),
+    plot.caption.position = "plot", 
+    plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
+    panel.grid.major.x = element_line(color = "grey90"),  
+    panel.grid.major.y = element_line(color = "grey90"), 
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y.left  = element_text(margin = margin(r = 15)),
+    axis.title.y.right = element_text(margin = margin(l = 15))
+  )
+
+p_cov
+
+# Save each page
+# ggsave(filename = file.path("../plots_report/covariate_importance.png"),
+#        plot = p_cov, width = 12, height = 10, dpi = 300)
+```
+
+--------------------------------------------------------------------------------
+
+```{r Investigate k selection for Morans I calculation}
+
+# Import residuals from hourly MLR models
+mlr_residuals <- read.csv("../MLR_ANBH_07_2023_12days/mlr_residuals_all.csv",
+  stringsAsFactors = FALSE)
+
+# Load station coords
+station_coords_sf <- sf::read_sf("../data/temp_HD/station_coords.gpkg")
+
+# Extract UTM coords for each station
+station_coords_df <- station_coords_sf %>%
+  st_transform(32632) %>%                     
+  mutate(
+    lon = st_coordinates(.)[, 1],          
+    lat = st_coordinates(.)[, 2]              
+  ) %>%
+  st_drop_geometry()
+
+# Parse timestamps and attach station coords to residuals
+mlr_residuals <- mlr_residuals %>%
+  mutate(
+    hour = suppressWarnings(ymd_hms(timestamp, tz = "Europe/Berlin")),
+    hour = ifelse(is.na(hour), ymd(timestamp, tz = "Europe/Berlin"), hour),
+    hour = as.POSIXct(hour, origin = "1970-01-01", tz = "Europe/Berlin"),
+    day  = as.Date(hour, tz = "Europe/Berlin")
+  ) %>%
+  left_join(station_coords_df, by = "entity_id")
+
+# Convert to sf object for spatial operations
+mlr_residuals_sf <- st_as_sf(mlr_residuals, coords = c("lon", "lat"), 
+                             crs = 32632, remove = FALSE)
+
+# k neighbourhood options
+k_values <- 4:8
+
+# Monte Carlo runs
+nsim_mc  <- 999   
+
+# Extract hourly groups
+hour_groups <- mlr_residuals_sf %>%
+  group_split(hour)
+
+# A list to store all results
+k_eval_results <- list()
+
+
+# Main loop over hourly slices
+for (df_slice in hour_groups) {
+
+  current_hour <- unique(df_slice$hour)
+
+  xy <- st_coordinates(df_slice)
+  n  <- nrow(df_slice)
+
+  # Storage table for this hour
+  hour_results <- tibble()
+
+  # Loop over different k values
+  for (k in k_values) {
+
+    # Build kNN graph
+    knn <- knearneigh(xy, k = k)
+    nb  <- knn2nb(knn)
+    lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+    # Graph connectivity
+    # Construct adjacency matrix for igraph
+    g <- graph_from_adj_list(nb)
+    n_components <- igraph::count_components(g)
+
+    # Moran’s I
+    mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
+    mc <- moran.mc(df_slice$residual, lw, nsim = nsim_mc, zero.policy = TRUE)
+
+    # Save results
+    hour_results <- bind_rows(hour_results, tibble(
+      hour     = current_hour,
+      k        = k,
+      moran_i  = mt$estimate[["Moran I statistic"]],
+      expected = mt$estimate[["Expectation"]],
+      p_asym   = mt$p.value,
+      p_mc     = mc$p.value,
+      n_comp   = n_components      # graph connectivity metric
+    ))
+  }
+
+  # Store results
+  k_eval_results[[as.character(current_hour)]] <- hour_results
+}
+
+# Final summary table
+k_summary <- bind_rows(k_eval_results)
+
+# Output table for recommended k for each hour
+recommended_k <- k_summary %>%
+  group_by(hour) %>%
+  mutate(
+    # Criterion 1: graph must be connected
+    valid_conn = n_comp == 1,
+    # Criterion 2: prefer significant Moran's I
+    sig = p_mc < 0.05,
+    # Scoring system:
+    # +10 if connected, +5 if significant, +3 for highest Moran's I
+    score = 10 * valid_conn + 5 * sig + 3 * (moran_i == max(moran_i))
+  ) %>%
+  filter(score == max(score)) %>%
+  slice(1) %>%     # break ties consistently
+  ungroup()
+
+# Count how many times each k was best
+k_counts <- recommended_k %>%
+  count(k, name = "times_best")
+
+k_counts
+```
+
+```{r Loop to calculate Morans I on regression residuals}
+
+# Define analysis period and container for daily Moran's I results
+month_start <- as.Date("2023-07-01")
+month_end   <- as.Date("2023-07-12")
+all_days    <- seq(month_start, month_end, by = "day")
+moran_summary_list <- list()
+
+# Loop over each day and compute Moran’s I for every hour separately
+for (one_day in all_days) {
+  message("Processing ", one_day)
+
+  # Extract residuals for the current day
+  df_day <- mlr_residuals_sf %>%
+    filter(day == one_day)
+
+  if (nrow(df_day) == 0) next
+
+  # Compute Moran's I for each hourly timestamp
+  moran_results <- df_day %>%
+    group_split(hour) %>%
+    map_dfr(function(df_slice) {
+      
+      # Extract coordinates for spatial weights construction
+      xy <- st_coordinates(df_slice)
+      
+      # Build nearest-neighbor weights (k=8) for Moran's I
+      knn <- knearneigh(xy, k = 4)
+      nb  <- knn2nb(knn)
+      lw  <- nb2listw(nb, style = "W", zero.policy = TRUE)
+      
+      # Compute Moran's I (asymptotic and Monte Carlo versions)
+      mt <- moran.test(df_slice$residual, lw, zero.policy = TRUE)
+      mc <- moran.mc(df_slice$residual, lw, nsim = 999, zero.policy = TRUE)
+      
+      # 95% Monte Carlo confidence interval
+      q  <- quantile(mc$res, c(0.025, 0.975))
+      
+      # Store results for this hour
+      tibble(
+        hour     = unique(df_slice$hour),
+        moran_i  = mt$estimate[["Moran I statistic"]],
+        expected = mt$estimate[["Expectation"]],
+        p_asym   = mt$p.value,
+        p_mc     = mc$p.value,
+        lo95     = q[1],
+        hi95     = q[2]
+      )
+    })
+  
+  # Clean and standardise output format for joining with coefficient tables later
+  moran_results_clean <- moran_results %>%
+    mutate(
+      date = as.Date(hour, tz = "Europe/Berlin"),
+      hour = lubridate::hour(hour),
+      moran_sig = if_else(p_mc < 0.05, TRUE, FALSE)
+    ) %>%
+    dplyr::select(date, hour, moran_i, p_mc, moran_sig)
+  
+  # Save daily results into list
+  moran_summary_list[[as.character(one_day)]] <- moran_results_clean
+}
+
+# Combine daily results into one table
+moran_summary <- dplyr::bind_rows(moran_summary_list)
+```
+
+--------------------------------------------------------------------------------
+
+```{r Plot Robust P-Values}
+
+# Categorize p-values before plotting
+coef_all <- coef_all %>%
+  mutate(
+    p_category = case_when(
+      p_robust < 0.001 ~ "< 0.001",
+      p_robust < 0.01  ~ "< 0.01",
+      p_robust < 0.05  ~ "< 0.05",
+      TRUE             ~ "≥ 0.05 (n.s.)"
+    )
+  )
+
+# Join Moran's I significance to the coefficient table
+coef_all <- coef_all %>%
+  left_join(moran_summary, by = c("date", "hour"))
+
+# One row per day and hour, keeping only hours with significant Moran's I
+# Used for red significance band in plot
+moran_band <- coef_all %>%
+  dplyr::distinct(date, hour, moran_sig.y) %>%
+  # TRUE = significant spatial autocorrelation
+  dplyr::filter(moran_sig.y)   
+
+# Covariate significance + Moran's I overlay
+p_pval <- ggplot(coef_all, aes(x = hour, y = term, fill = p_category)) +
+  geom_tile(color = "grey85") +
+  geom_rect(
+    data = moran_band,
+    aes(xmin = hour - 0.5, xmax = hour + 0.5,
+        ymin = -Inf, ymax = Inf,
+        color = "Moran’s I (p < 0.05)"),
+    inherit.aes = FALSE, fill = NA, linewidth = 0.4, alpha = 0.4
+  ) +
+  ggforce::facet_wrap_paginate(~ date, ncol = 3, nrow = 4) +
+  scale_y_discrete(labels = c(
+    "building_height_z" = "Building Height",
+    "canopy_height_z"   = "Canopy Height",
+    "elevation_z"       = "Elevation"
+  )) +
+  scale_x_continuous(breaks = seq(0, 24, 6), limits = c(0, 24)) +
+  scale_fill_manual(
+    name = "Significance (robust p-value)",
+    values = c(
+      "< 0.001" = "#440154",
+      "< 0.01"  = "#31688e",
+      "< 0.05"  = "#35b779",
+      "≥ 0.05 (n.s.)" = "grey85"
+    )
+  ) +
+  scale_color_manual(
+    name = "",
+    values = c("Moran’s I (p < 0.05)" = "firebrick3")
+  ) +
+  labs(x = "Hour of the Day", y = "Covariates") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(
+      face = "bold", size = 20, hjust = 0.5,
+      margin = margin(t = 10, b = 10)),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    plot.caption.position = "plot",
+    plot.caption = element_text(hjust = 0, margin = margin(t = 20)),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    legend.key.width = unit(2, "lines"),
+    legend.text = element_text(size = 11),
+    legend.box = "horizontal",
+    panel.spacing = unit(0.8, "lines"),
+    panel.grid = element_blank(),
+    panel.grid.major.x = element_line(color = "grey90"),
+    panel.grid.major.y = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(margin = margin(t = 15)),
+    axis.title.y = element_text(margin = margin(r = 15))
+  ) +
+  guides(
+    fill = guide_legend(order = 1),
+    color = guide_legend(order = 2, override.aes = list(fill = NA, linewidth = 0.9, size = 5))
+  )
+
+p_pval
+
+# Save plot
+# ggsave(filename = file.path("../plots_report/sig_covariates_pval.png"), plot = p_pval,
+#        width = 12, height = 10, dpi = 300)
+```
