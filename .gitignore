@@ -80,3 +80,6 @@ maps/.DS_Store
 data/elevation/n49_e008_1arc_v3.tif
 /maps
 /maps
+r_scripts/__analyse_temp_data.Rmd
+r_scripts/__rf_rk_different_timestamps.Rmd
+r_scripts/__test_script.Rmd
