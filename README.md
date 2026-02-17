@@ -9,16 +9,18 @@ This study incorporates high-temporal-resolution air temperature data from weath
 - *RQ 3:* How does temporal aggregation scale affect the performance and outcomes of RK-based temperature interpolation?
 
 ## How to run the analysis
-The analysis is based on 8 RMarkdown files which include the following information:
-1. [01_hourly_rk.Rmd](r_scripts/01_hourly_rk.Rmd) is the entire RK framwork with hourly temporal resolution.
-2. [02_hourly_rk_results.Rmd](r_scripts/01_hourly_rk_results.Rmd) incorporates code for the creation of output plots.
-3. [03_hourly_rk_model_comparison.Rmd](r_scripts/03_hourly_rk_model_comparison.Rmd) can be run to compare the hourly RK predictions against the Stadtklimaanalyse of the city of Heidelberg (2023).
-4. [04_hourly_mlr.Rmd](r_scripts/04_hourly_mlr.Rmd) is the deterministic component (MLR) of the RK framwork with hourly temporal resolution.
-5. [05_hourly_mlr_results.Rmd](r_scripts/05_hourly_mlr_results.Rmd) incorporates code for the creation of output plots.
-6. [06_multicollinearity_covariates.Rmd](r_scripts/06_multicollinearity_covariates.Rmd) is the analysis of covariates regarding relationships with the target variable and addressing multicollinearity.
-7. [07_monthly_rk.Rmd](r_scripts/07_monthly_rk.Rmd) is the entire RK framwork with monthly temporal resolution.
-8. [08_hourly_rk_gaussian.Rmd](r_scripts/08_hourly_rk_gaussian.Rmd) is the entire RK framwork with hourly temporal resolution jusr adjusted to run with gaussian-smoothed canopy height data.
-
+The analysis consists of eight RMarkdown scripts, each covering a specific component of the workflow. They can be grouped in several smaller work packages:
+**Workpackage 1:** 
+1. [01_hourly_rk.Rmd](r_scripts/01_hourly_rk.Rmd) Complete RK framework with hourly temporal resolution.
+2. [02_hourly_rk_results.Rmd](r_scripts/01_hourly_rk_results.Rmd) Generates plots and visual summaries of the hourly RK results.
+3. [03_hourly_rk_model_comparison.Rmd](r_scripts/03_hourly_rk_model_comparison.Rmd) Compares hourly RK predictions with the 2023 Stadtklimaanalyse of the City of Heidelberg.
+**Workpackage 2:**
+4. [04_hourly_mlr.Rmd](r_scripts/04_hourly_mlr.Rmd) Implements the deterministic component (MLR) of the hourly RK framework.
+5. [05_hourly_mlr_results.Rmd](r_scripts/05_hourly_mlr_results.Rmd) Produces evaluation plots and diagnostics for the hourly MLR models.
+**Workpackage 3:**
+6. [06_multicollinearity_covariates.Rmd](r_scripts/06_multicollinearity_covariates.Rmd) Examines relationships between covariates and the target variable, including multicollinearity diagnostics.
+7. [07_monthly_rk.Rmd](r_scripts/07_monthly_rk.Rmd) Complete RK framework with monthly temporal resolution.
+8. [08_hourly_rk_gaussian.Rmd](r_scripts/08_hourly_rk_gaussian.Rmd) Variant of the hourly RK framework using Gaussian-smoothed canopy height data.
 
 ## Example Regression-Kriging Temperature Surface for the Study Area
 
