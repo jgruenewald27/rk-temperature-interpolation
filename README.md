@@ -10,13 +10,16 @@ This study incorporates high-temporal-resolution air temperature data from weath
 
 ## How to run the analysis
 The analysis consists of eight RMarkdown scripts, each covering a specific component of the workflow. They can be grouped in several smaller work packages:
+
 **Workpackage 1:** 
 1. [01_hourly_rk.Rmd](r_scripts/01_hourly_rk.Rmd) Complete RK framework with hourly temporal resolution.
 2. [02_hourly_rk_results.Rmd](r_scripts/01_hourly_rk_results.Rmd) Generates plots and visual summaries of the hourly RK results.
 3. [03_hourly_rk_model_comparison.Rmd](r_scripts/03_hourly_rk_model_comparison.Rmd) Compares hourly RK predictions with the 2023 Stadtklimaanalyse of the City of Heidelberg.
+
 **Workpackage 2:**
 4. [04_hourly_mlr.Rmd](r_scripts/04_hourly_mlr.Rmd) Implements the deterministic component (MLR) of the hourly RK framework.
 5. [05_hourly_mlr_results.Rmd](r_scripts/05_hourly_mlr_results.Rmd) Produces evaluation plots and diagnostics for the hourly MLR models.
+
 **Workpackage 3:**
 6. [06_multicollinearity_covariates.Rmd](r_scripts/06_multicollinearity_covariates.Rmd) Examines relationships between covariates and the target variable, including multicollinearity diagnostics.
 7. [07_monthly_rk.Rmd](r_scripts/07_monthly_rk.Rmd) Complete RK framework with monthly temporal resolution.
