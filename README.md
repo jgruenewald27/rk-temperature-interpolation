@@ -57,15 +57,10 @@ The analysis consists of eight RMarkdown scripts, each covering a specific compo
 2. [02_hourly_rk_results.Rmd](r_scripts/01_hourly_rk_results.Rmd) Generates plots and visual summaries of the hourly RK results.
 3. [03_hourly_rk_model_comparison.Rmd](r_scripts/03_hourly_rk_model_comparison.Rmd) Compares hourly RK predictions with the 2023 Stadtklimaanalyse of the City of Heidelberg.
 
----
-
 ### Work Package 2 – Hourly MLR Analysis
 
 4. [04_hourly_mlr.Rmd](r_scripts/04_hourly_mlr.Rmd) Implements the deterministic component (MLR) of the hourly RK framework.
 5. [05_hourly_mlr_results.Rmd](r_scripts/05_hourly_mlr_results.Rmd) Produces evaluation plots and diagnostics for the hourly MLR models.
-
-
----
 
 ### Work Package 3 – Covariate Analysis, Monthly RK & Gaussian-smoothed canopy height data
 
