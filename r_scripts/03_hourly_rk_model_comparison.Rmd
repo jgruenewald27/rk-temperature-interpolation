@@ -221,7 +221,7 @@ p_rk_map <- ggplot() +
 p_ref_map <- ggplot() +
   geom_raster(data = ref_df, aes(x = x, y = y, fill = value)) +
   geom_sf(data = hd_bounds_sf, fill = NA, color = "black", linewidth = 0.4) +
-  scale_fill_viridis_c(name = "Physiologically Equivalent\nTemperature (PET) [°C]", limits = rng) +
+  scale_fill_viridis_c(name = "PET [°C]", limits = rng) +
   coord_sf() +
   annotation_scale(location = "br", width_hint = 0.3) +
   annotation_north_arrow(location = "tl", which_north = "true", width = unit(0.9, "cm"),
@@ -253,7 +253,7 @@ p_rk_map
 # Save as PNG
 # ggsave("../plots_report/rk_14-00.png", p_rk_map, width = 8, height = 4, dpi = 300)
 # 
-# ggsave("../plots_report/urban_model_14-00.png", p_ref_map, width = 8, height = 4, dpi = 300)
+ggsave("../plots_report/urban_model_14-00.png", p_ref_map, width = 8, height = 4, dpi = 300)
 ```
 
 Short explanation of the following chunk:
